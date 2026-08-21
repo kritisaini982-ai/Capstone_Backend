@@ -33,11 +33,11 @@ public class FileUploadController {
             return ResponseEntity.badRequest().body(Map.of("error", "File is empty"));
         }
 
-        // Create a strictly isolated temp directory for this specific request
         Path tempDirPath = null;
         try {
             tempDirPath = Files.createTempDirectory("extension_scan_" + System.currentTimeMillis() + "_");
             File tempDir = tempDirPath.toFile();
+            String canonicalDestinationDirPath = tempDir.getCanonicalPath();
 
             try (InputStream is = file.getInputStream();
                  ZipInputStream zis = new ZipInputStream(is)) {
@@ -45,6 +45,14 @@ public class FileUploadController {
                 ZipEntry entry;
                 while ((entry = zis.getNextEntry()) != null) {
                     File newFile = new File(tempDir, entry.getName());
+                    
+                    // Zip Slip Vulnerability Protection
+                    String canonicalDestinationFile = newFile.getCanonicalPath();
+                    if (!canonicalDestinationFile.startsWith(canonicalDestinationDirPath + File.separator)) {
+                        return ResponseEntity.badRequest().body(Map.of(
+                            "error", "Bad zip entry path (Zip Slip attack detected): " + entry.getName()
+                        ));
+                    }
 
                     if (entry.isDirectory()) {
                         newFile.mkdirs();
@@ -85,7 +93,6 @@ public class FileUploadController {
             e.printStackTrace();
             return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
         } finally {
-            // Delete the temporary extraction folder so old manifests never bleed into new scans
             if (tempDirPath != null) {
                 try (var stream = Files.walk(tempDirPath)) {
                     stream.sorted(Comparator.reverseOrder())
