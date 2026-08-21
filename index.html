@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Extension Observatory | File Upload</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: #f8f9fa; color: #333; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }
+        
+        .container { background: #ffffff; width: 100%; max-width: 600px; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.08); }
+        .header { margin-bottom: 24px; text-align: center; }
+        .header h1 { font-size: 1.5rem; color: #1a1a1a; margin-bottom: 6px; }
+        .header p { color: #6c757d; font-size: 0.9rem; }
+
+        .upload-area { border: 2px dashed #007bff; border-radius: 8px; padding: 30px; text-align: center; background: #f0f7ff; cursor: pointer; transition: background 0.2s; margin-bottom: 20px; }
+        .upload-area:hover { background: #e2f0ff; }
+        .file-input { display: none; }
+        
+        .btn { width: 100%; background: #007bff; color: white; padding: 12px; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+        .btn:hover { background: #0056b3; }
+        .btn:disabled { background: #6c757d; cursor: not-allowed; }
+
+        .result-card { margin-top: 24px; padding: 20px; border-radius: 8px; background: #f8f9fa; border: 1px solid #e9ecef; display: none; }
+        .result-card.active { display: block; }
+        
+        .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid #dee2e6; padding-bottom: 10px; }
+        .badge { background: #28a745; color: white; padding: 4px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; }
+        
+        .info-row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.95rem; }
+        .info-label { color: #6c757d; font-weight: 500; }
+        .info-value { font-weight: 600; color: #212529; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>Browser Extension Analyzer</h1>
+        <p>Upload a extension .zip file to scan security permissions</p>
+    </div>
+
+    <form id="uploadForm">
+        <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+            <p id="fileLabel">📁 <strong>Click to select</strong> or drop a <code>.zip</code> file</p>
+            <input type="file" id="fileInput" class="file-input" accept=".zip" required>
+        </div>
+        <button type="submit" id="submitBtn" class="btn">Analyze Extension</button>
+    </form>
+
+    <div id="resultCard" class="result-card">
+        <div class="result-header">
+            <h3>Analysis Summary</h3>
+            <span id="statusBadge" class="badge">EXTRACTED</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">File Name:</span>
+            <span id="resFile" class="info-value">-</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Extension Name:</span>
+            <span id="resName" class="info-value">-</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Scan ID:</span>
+            <span id="resScanId" class="info-value">-</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Risk Score:</span>
+            <span id="resRisk" class="info-value">-</span>
+        </div>
+    </div>
+</div>
+
+<script>
+    const fileInput = document.getElementById('fileInput');
+    const fileLabel = document.getElementById('fileLabel');
+    const submitBtn = document.getElementById('submitBtn');
+
+    // Update label when file is selected
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length > 0) {
+            fileLabel.innerHTML = `Selected: <strong>${fileInput.files[0].name}</strong>`;
+        }
+    });
+
+    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        if (!fileInput.files.length) return;
+
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Scanning...';
+
+        try {
+            const response = await fetch('http://localhost:8080/api/v1/extensions/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+
+            document.getElementById('resFile').textContent = data.filename || '-';
+            document.getElementById('resName').textContent = data.analysis?.name || 'Unknown';
+            document.getElementById('resScanId').textContent = data.scanId || '-';
+            document.getElementById('resRisk').textContent = data.analysis?.riskScore ?? 0;
+            document.getElementById('statusBadge').textContent = data.status || 'COMPLETED';
+
+            document.getElementById('resultCard').classList.add('active');
+        } catch (error) {
+            alert('Upload failed. Ensure Spring Boot is running on port 8080.');
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Analyze Extension';
+        }
+    });
+</script>
+
+</body>
+</html>
