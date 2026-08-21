@@ -20,14 +20,20 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 @RestController
-@RequestMapping("/api/v1/extensions")
 @CrossOrigin(origins = "*")
 public class FileUploadController {
 
     @Autowired
     private ManifestAnalysisService manifestAnalysisService;
 
-    @PostMapping("/upload")
+    // Handles GET http://localhost:8080/
+    @GetMapping("/")
+    public ResponseEntity<String> healthCheck() {
+        return ResponseEntity.ok("Observatory Backend API is running!");
+    }
+
+    // Handles POST http://localhost:8080/api/v1/extensions/upload
+    @PostMapping("/api/v1/extensions/upload")
     public ResponseEntity<Map<String, Object>> uploadPackage(@RequestParam("file") MultipartFile file) {
         if (file.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "File is empty"));
