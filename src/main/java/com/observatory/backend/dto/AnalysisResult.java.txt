@@ -1,0 +1,27 @@
+package com.observatory.backend.dto;
+
+import java.util.List;
+
+public class AnalysisResult {
+    private String name;
+    private String version;
+    private int manifestVersion;
+    private List<String> permissions;
+    private int riskScore;
+
+    public AnalysisResult() {}
+
+    public AnalysisResult(String name, String version, int manifestVersion, List<String> permissions, int riskScore) {
+        this.name = name;
+        this.version = version;
+        this.manifestVersion = manifestVersion;
+        this.permissions = permissions;
+        this.riskScore = riskScore;
+    }
+
+    public String getName() { return name; }
+    public String getVersion() { return version; }
+    public int getManifestVersion() { return manifestVersion; }
+    public List<String> getPermissions() { return permissions; }
+    public int getRiskScore() { return riskScore; }
+}
