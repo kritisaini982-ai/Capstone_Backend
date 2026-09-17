@@ -9,6 +9,7 @@ import com.observatory.backend.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -16,6 +17,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,6 +43,9 @@ public class FileUploadController {
     
     // Track allowlisted scans per scanId to prevent cross-account incrementing
     private final Set<String> allowlistedScanIds = ConcurrentHashMap.newKeySet();
+
+    // Define the directory where your uploaded/scanned extension packages are stored
+    private final Path fileStorageLocation = Paths.get("uploads").toAbsolutePath().normalize();
 
     // ==================== AUTHENTICATION ENDPOINTS ====================
 
@@ -103,6 +110,11 @@ public class FileUploadController {
         int calculatedRiskScore = 0;
         String scanId = UUID.randomUUID().toString().substring(0, 8);
         String filename = file.getOriginalFilename() != null ? file.getOriginalFilename() : "extension.zip";
+
+        // Calculate real SHA-256 hash and file size of the uploaded file bytes
+        String sha256Hash = calculateSha256(file);
+        long fileSizeInBytes = file != null ? file.getSize() : 0;
+        String formattedFileSize = formatFileSize(fileSizeInBytes);
 
         try {
             byte[] fileBytes = file.getBytes();
@@ -205,10 +217,17 @@ public class FileUploadController {
         analysis.put("sbomFindings", sbomFindings);
         analysis.put("riskExplanations", riskExplanations);
         analysis.put("recommendation", recommendation);
+        analysis.put("hash", sha256Hash); // Nested hash access
+        analysis.put("fileSize", formattedFileSize); // Nested size string
+        analysis.put("fileSizeBytes", fileSizeInBytes); // Nested size bytes
 
         response.put("filename", filename);
+        response.put("fileSize", formattedFileSize); // Root formatted size string
+        response.put("fileSizeBytes", fileSizeInBytes); // Root raw size bytes
         response.put("status", calculatedRiskScore > 70 ? "FLAGGED" : "SECURE");
         response.put("scanId", scanId);
+        response.put("sha256", sha256Hash); // Root sha256 access
+        response.put("hash", sha256Hash);   // Root hash access
         response.put("analysis", analysis);
 
         // Save scan history tied specifically to the userEmail
@@ -224,6 +243,24 @@ public class FileUploadController {
         scanHistoryRepository.save(historyItem);
 
         return response;
+    }
+
+    private String calculateSha256(MultipartFile file) {
+        try {
+            if (file == null || file.isEmpty()) return "N/A";
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashBytes = digest.digest(file.getBytes());
+            return HexFormat.of().formatHex(hashBytes); // Java 17+
+        } catch (Exception e) {
+            return "N/A";
+        }
+    }
+
+    private String formatFileSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        int exp = (int) (Math.log(bytes) / Math.log(1024));
+        String pre = "KMGTPE".charAt(exp - 1) + "";
+        return String.format("%.1f %sB", bytes / Math.pow(1024, exp), pre);
     }
 
     @GetMapping("/scans/history")
@@ -327,6 +364,27 @@ public class FileUploadController {
         stats.put("allowlisted", (int) userAllowlistedCount);
         
         return ResponseEntity.ok(stats);
+    }
+
+    @GetMapping("/extensions/download-file")
+    public ResponseEntity<Resource> downloadStoredFile(
+            @RequestParam(value = "filename", defaultValue = "extension.zip") String filename) {
+        try {
+            Path filePath = fileStorageLocation.resolve(filename).normalize();
+            Resource resource = new UrlResource(filePath.toUri());
+
+            if (!resource.exists() || !resource.isReadable()) {
+                return ResponseEntity.notFound().build();
+            }
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + resource.getFilename() + "\"")
+                    .body(resource);
+
+        } catch (Exception ex) {
+            return ResponseEntity.internalServerError().build();
+        }
     }
 
     private void appendIfMissing(List<String> list, String item) {

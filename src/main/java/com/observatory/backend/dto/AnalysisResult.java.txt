@@ -1,13 +1,16 @@
 package com.observatory.backend.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
 public class AnalysisResult {
-    private String name;
-    private String version;
-    private int manifestVersion;
-    private List<String> permissions;
-    private int riskScore;
+    @JsonProperty("name") private String name;
+    @JsonProperty("version") private String version;
+    @JsonProperty("manifestVersion") private int manifestVersion;
+    @JsonProperty("permissions") private List<String> permissions;
+    @JsonProperty("riskScore") private int riskScore;
+    @JsonProperty("versionDiff") private String versionDiff;
+    @JsonProperty("sbomFindings") private String sbomFindings;
 
     public AnalysisResult() {}
 
@@ -17,11 +20,35 @@ public class AnalysisResult {
         this.manifestVersion = manifestVersion;
         this.permissions = permissions;
         this.riskScore = riskScore;
+        this.versionDiff = "";
+        this.sbomFindings = "";
     }
 
+    public AnalysisResult(String name, String version, int manifestVersion, List<String> permissions, int riskScore, String versionDiff, String sbomFindings) {
+        this.name = name;
+        this.version = version;
+        this.manifestVersion = manifestVersion;
+        this.permissions = permissions;
+        this.riskScore = riskScore;
+        this.versionDiff = versionDiff;
+        this.sbomFindings = sbomFindings;
+    }
+
+    // Getters
     public String getName() { return name; }
     public String getVersion() { return version; }
     public int getManifestVersion() { return manifestVersion; }
     public List<String> getPermissions() { return permissions; }
     public int getRiskScore() { return riskScore; }
+    public String getVersionDiff() { return versionDiff; }
+    public String getSbomFindings() { return sbomFindings; }
+
+    // Setters
+    public void setName(String name) { this.name = name; }
+    public void setVersion(String version) { this.version = version; }
+    public void setManifestVersion(int manifestVersion) { this.manifestVersion = manifestVersion; }
+    public void setPermissions(List<String> permissions) { this.permissions = permissions; }
+    public void setRiskScore(int riskScore) { this.riskScore = riskScore; }
+    public void setVersionDiff(String versionDiff) { this.versionDiff = versionDiff; }
+    public void setSbomFindings(String sbomFindings) { this.sbomFindings = sbomFindings; }
 }
