@@ -3,9 +3,13 @@ package com.observatory.backend.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.observatory.backend.model.ScanHistory;
+import com.observatory.backend.model.AuditLog;
 import com.observatory.backend.model.User;
 import com.observatory.backend.repository.ScanHistoryRepository;
 import com.observatory.backend.repository.UserRepository;
+import com.observatory.backend.repository.AuditLogRepository;
+import com.observatory.backend.service.ManifestAnalysisService;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
@@ -17,6 +21,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
@@ -37,358 +43,1469 @@ public class FileUploadController {
     @Autowired
     private UserRepository userRepository;
 
-    // Thread-safe caches keyed by scanId
-    private final Map<String, byte[]> fileCache = new ConcurrentHashMap<>();
-    private final Map<String, String> filenameCache = new ConcurrentHashMap<>();
-    
-    // Track allowlisted scans per scanId to prevent cross-account incrementing
-    private final Set<String> allowlistedScanIds = ConcurrentHashMap.newKeySet();
+    @Autowired
+    private ManifestAnalysisService manifestAnalysisService;
 
-    // Define the directory where your uploaded/scanned extension packages are stored
-    private final Path fileStorageLocation = Paths.get("uploads").toAbsolutePath().normalize();
+    @Autowired
+    private AuditLogRepository auditLogRepository;
 
-    // ==================== AUTHENTICATION ENDPOINTS ====================
+    // =========================================================
+    // FILE CACHE
+    // =========================================================
+
+    private final Map<String, byte[]> fileCache =
+            new ConcurrentHashMap<>();
+
+    private final Map<String, String> filenameCache =
+            new ConcurrentHashMap<>();
+
+    // =========================================================
+    // ALLOWLIST CACHE
+    // =========================================================
+
+    private final Set<String> allowlistedScanIds =
+            ConcurrentHashMap.newKeySet();
+
+    // =========================================================
+    // FILE STORAGE LOCATION
+    // =========================================================
+
+    private final Path fileStorageLocation =
+            Paths.get("uploads")
+                    .toAbsolutePath()
+                    .normalize();
+
+    // =========================================================
+    // AUTHENTICATION - LOGIN
+    // =========================================================
 
     @PostMapping("/auth/login")
-    public ResponseEntity<Map<String, Object>> login(@RequestBody Map<String, String> credentials) {
-        String email = credentials.get("email");
-        String password = credentials.get("password");
+    public ResponseEntity<Map<String, Object>> login(
+            @RequestBody Map<String, String> credentials) {
 
-        Map<String, Object> response = new HashMap<>();
+        String email =
+                credentials.get("email");
+
+        String password =
+                credentials.get("password");
+
+        Map<String, Object> response =
+                new HashMap<>();
+
         if (email == null || password == null) {
-            response.put("message", "Email and password are required");
-            return ResponseEntity.badRequest().body(response);
-        }
+    response.put("message", "Email and password are required");
+    return ResponseEntity.badRequest().body(response);
+}
 
-        Optional<User> userOpt = userRepository.findByEmail(email);
-        if (userOpt.isPresent() && userOpt.get().getPassword().equals(password)) {
-            response.put("token", "mock-jwt-token-secure-12345");
-            response.put("message", "Login successful");
+if (password.length() < 8) {
+    response.put("message", "Password must be at least 8 characters long");
+    return ResponseEntity.badRequest().body(response);
+}
+
+        Optional<User> userOpt =
+                userRepository.findByEmail(email);
+
+        if (userOpt.isPresent()
+                && userOpt.get()
+                .getPassword()
+                .equals(password)) {
+
+            response.put(
+                    "token",
+                    "mock-jwt-token-secure-12345"
+            );
+
+            response.put(
+                    "message",
+                    "Login successful"
+            );
+
             return ResponseEntity.ok(response);
         }
 
-        response.put("message", "Invalid credentials");
-        return ResponseEntity.badRequest().body(response);
+        response.put(
+                "message",
+                "Invalid credentials"
+        );
+
+        return ResponseEntity
+                .badRequest()
+                .body(response);
     }
 
+    // =========================================================
+    // AUTHENTICATION - REGISTER
+    // =========================================================
+
     @PostMapping("/auth/register")
-    public ResponseEntity<Map<String, Object>> register(@RequestBody Map<String, String> credentials) {
-        String email = credentials.get("email");
-        String password = credentials.get("password");
-        
-        Map<String, Object> response = new HashMap<>();
+    public ResponseEntity<Map<String, Object>> register(
+            @RequestBody Map<String, String> credentials) {
+
+        String email =
+                credentials.get("email");
+
+        String password =
+                credentials.get("password");
+
+        Map<String, Object> response =
+                new HashMap<>();
+
         if (email == null || password == null) {
-            response.put("message", "Email and password are required");
-            return ResponseEntity.badRequest().body(response);
+
+            response.put(
+                    "message",
+                    "Email and password are required"
+            );
+
+            return ResponseEntity
+                    .badRequest()
+                    .body(response);
         }
 
-        if (userRepository.findByEmail(email).isPresent()) {
-            response.put("message", "User already exists");
-            return ResponseEntity.badRequest().body(response);
+        if (userRepository
+                .findByEmail(email)
+                .isPresent()) {
+
+            response.put(
+                    "message",
+                    "User already exists"
+            );
+
+            return ResponseEntity
+                    .badRequest()
+                    .body(response);
         }
 
-        userRepository.save(new User(email, password));
-        response.put("token", "mock-jwt-token-secure-12345");
-        response.put("message", "User registered successfully");
+        userRepository.save(
+                new User(
+                        email,
+                        password
+                )
+        );
+
+        response.put(
+                "token",
+                "mock-jwt-token-secure-12345"
+        );
+
+        response.put(
+                "message",
+                "User registered successfully"
+        );
+
         return ResponseEntity.ok(response);
     }
 
-    // ==================== EXTENSION ANALYSIS ENDPOINTS ====================
+    // =========================================================
+    // EXTENSION ANALYSIS / UPLOAD
+    // =========================================================
 
     @PostMapping("/extensions/upload")
     public Map<String, Object> uploadExtension(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "userEmail", defaultValue = "anonymous") String userEmail) {
-        
-        Map<String, Object> response = new HashMap<>();
-        List<String> extractedPermissions = new ArrayList<>();
-        List<String> riskExplanations = new ArrayList<>();
-        
-        String name = "Unknown Extension";
-        String version = "1.0.0";
-        int manifestVersion = 3;
-        int calculatedRiskScore = 0;
-        String scanId = UUID.randomUUID().toString().substring(0, 8);
-        String filename = file.getOriginalFilename() != null ? file.getOriginalFilename() : "extension.zip";
+            @RequestParam(
+                    value = "userEmail",
+                    defaultValue = "anonymous"
+            )
+            String userEmail) {
 
-        // Calculate real SHA-256 hash and file size of the uploaded file bytes
-        String sha256Hash = calculateSha256(file);
-        long fileSizeInBytes = file != null ? file.getSize() : 0;
-        String formattedFileSize = formatFileSize(fileSizeInBytes);
+        Map<String, Object> response =
+                new HashMap<>();
+
+        List<String> riskExplanations =
+                new ArrayList<>();
+
+        String filename =
+                file != null
+                        && file.getOriginalFilename() != null
+                        ? file.getOriginalFilename()
+                        : "extension.zip";
+
+        String scanId =
+                UUID.randomUUID()
+                        .toString()
+                        .substring(0, 8);
+
+        File sandboxDir = null;
+
+        byte[] fileBytes;
+
+        // =====================================================
+        // VALIDATE FILE
+        // =====================================================
+
+        if (file == null || file.isEmpty()) {
+
+            response.put(
+                    "status",
+                    "ERROR"
+            );
+
+            response.put(
+                    "message",
+                    "Extension file is empty"
+            );
+
+            return response;
+        }
+
+        // =====================================================
+        // READ FILE + CREATE SANDBOX
+        // =====================================================
 
         try {
-            byte[] fileBytes = file.getBytes();
-            fileCache.put(scanId, fileBytes);
-            filenameCache.put(scanId, filename);
 
-            try (ZipInputStream zipIn = new ZipInputStream(file.getInputStream())) {
+            fileBytes =
+                    file.getBytes();
+
+            sandboxDir =
+                    Files.createTempDirectory(
+                            "observatory-scan-"
+                    ).toFile();
+
+            Path sandboxRoot =
+                    sandboxDir
+                            .toPath()
+                            .toAbsolutePath()
+                            .normalize();
+
+            // =================================================
+            // SAFE ZIP EXTRACTION
+            // =================================================
+
+            try (
+                    ZipInputStream extractIn =
+                            new ZipInputStream(
+                                    new java.io.ByteArrayInputStream(
+                                            fileBytes
+                                    )
+                            )
+            ) {
+
                 ZipEntry entry;
-                while ((entry = zipIn.getNextEntry()) != null) {
-                    if (!entry.isDirectory() && entry.getName().toLowerCase().endsWith("manifest.json")) {
-                        ObjectMapper mapper = new ObjectMapper();
-                        JsonNode manifest = mapper.readTree(zipIn);
 
-                        if (manifest.has("name")) name = manifest.get("name").asText();
-                        if (manifest.has("version")) version = manifest.get("version").asText();
-                        if (manifest.has("manifest_version")) manifestVersion = manifest.get("manifest_version").asInt();
+                while (
+                        (entry =
+                                extractIn.getNextEntry())
+                                != null
+                ) {
 
-                        if (manifest.has("permissions")) {
-                            manifest.get("permissions").forEach(p -> extractedPermissions.add(p.asText()));
+                    Path target =
+                            sandboxRoot
+                                    .resolve(
+                                            entry.getName()
+                                    )
+                                    .normalize();
+
+                    // =================================================
+                    // ZIP SLIP PROTECTION
+                    // =================================================
+
+                    if (!target.startsWith(
+                            sandboxRoot)) {
+
+                        throw new SecurityException(
+                                "Invalid ZIP entry path: "
+                                        + entry.getName()
+                        );
+                    }
+
+                    if (entry.isDirectory()) {
+
+                        Files.createDirectories(
+                                target
+                        );
+
+                    } else {
+
+                        if (target.getParent()
+                                != null) {
+
+                            Files.createDirectories(
+                                    target.getParent()
+                            );
                         }
-                        if (manifest.has("host_permissions")) {
-                            manifest.get("host_permissions").forEach(hp -> extractedPermissions.add("host: " + hp.asText()));
+
+                        Files.copy(
+                                extractIn,
+                                target,
+                                java.nio.file
+                                        .StandardCopyOption
+                                        .REPLACE_EXISTING
+                        );
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+
+            response.put(
+                    "status",
+                    "ERROR"
+            );
+
+            response.put(
+                    "message",
+                    "Failed to extract extension: "
+                            + e.getMessage()
+            );
+
+            return response;
+        }
+
+        // =====================================================
+        // FILE INFORMATION
+        // =====================================================
+
+        String sha256Hash =
+                calculateSha256(file);
+
+        long fileSizeInBytes =
+                file.getSize();
+
+        String formattedFileSize =
+                formatFileSize(
+                        fileSizeInBytes
+                );
+
+        // =====================================================
+        // STORE FILE IN MEMORY CACHE
+        // =====================================================
+
+        fileCache.put(
+                scanId,
+                fileBytes
+        );
+
+        filenameCache.put(
+                scanId,
+                filename
+        );
+
+        // =====================================================
+        // READ MANIFEST FOR BASIC VALIDATION / EXPLANATIONS
+        // =====================================================
+
+        JsonNode manifest = null;
+
+        String extensionName =
+                "Unknown Extension";
+
+        String extensionVersion =
+                "1.0.0";
+
+        int manifestVersion =
+                3;
+
+        List<String> extractedPermissions =
+                new ArrayList<>();
+
+        try {
+
+            try (
+                    ZipInputStream zipIn =
+                            new ZipInputStream(
+                                    new java.io.ByteArrayInputStream(
+                                            fileBytes
+                                    )
+                            )
+            ) {
+
+                ZipEntry entry;
+
+                while (
+                        (entry =
+                                zipIn.getNextEntry())
+                                != null
+                ) {
+
+                    String entryName =
+                            entry.getName()
+                                    .toLowerCase();
+
+                    if (!entry.isDirectory()
+                            && (
+                            entryName.endsWith(
+                                    "manifest.json"
+                            )
+                                    || entryName.endsWith(
+                                    "manifest.json.txt"
+                            )
+                    )) {
+
+                        ObjectMapper mapper =
+                                new ObjectMapper();
+
+                        manifest =
+                                mapper.readTree(
+                                        zipIn
+                                );
+
+                        // =============================================
+                        // NAME
+                        // =============================================
+
+                        if (manifest.has("name")) {
+
+                            extensionName =
+                                    manifest
+                                            .get("name")
+                                            .asText();
                         }
 
-                        for (String perm : extractedPermissions) {
-                            if (perm.contains("<all_urls>") || perm.contains("host: *") || perm.contains("http")) {
-                                calculatedRiskScore += 40;
-                                appendIfMissing(riskExplanations, "Broad host access declared: Permits reading and altering data across all visited websites.");
-                            } else if (perm.equals("cookies")) {
-                                calculatedRiskScore += 30;
-                                appendIfMissing(riskExplanations, "Cookies access requested: Allows reading and modifying session cookies, increasing session hijacking risk.");
-                            } else if (perm.equals("webRequest")) {
-                                calculatedRiskScore += 30;
-                                appendIfMissing(riskExplanations, "WebRequest API enabled: Grants capability to intercept, block, or modify live network traffic.");
-                            } else if (perm.equals("scripting")) {
-                                calculatedRiskScore += 15;
-                                appendIfMissing(riskExplanations, "Scripting permission found: Allows executing arbitrary code injections inside active web pages.");
-                            } else {
-                                calculatedRiskScore += 5;
-                            }
+                        // =============================================
+                        // VERSION
+                        // =============================================
+
+                        if (manifest.has("version")) {
+
+                            extensionVersion =
+                                    manifest
+                                            .get("version")
+                                            .asText();
                         }
 
-                        calculatedRiskScore = Math.min(calculatedRiskScore, 100);
+                        // =============================================
+                        // MANIFEST VERSION
+                        // =============================================
+
+                        if (manifest.has(
+                                "manifest_version"
+                        )) {
+
+                            manifestVersion =
+                                    manifest
+                                            .get(
+                                                    "manifest_version"
+                                            )
+                                            .asInt();
+                        }
+
+                        // =============================================
+                        // PERMISSIONS
+                        // =============================================
+
+                        if (manifest.has(
+                                "permissions"
+                        )
+                                && manifest
+                                .get("permissions")
+                                .isArray()) {
+
+                            manifest
+                                    .get("permissions")
+                                    .forEach(
+                                            permission ->
+                                                    extractedPermissions
+                                                            .add(
+                                                                    permission
+                                                                            .asText()
+                                                            )
+                                    );
+                        }
+
+                        // =============================================
+                        // HOST PERMISSIONS
+                        // =============================================
+
+                        if (manifest.has(
+                                "host_permissions"
+                        )
+                                && manifest
+                                .get(
+                                        "host_permissions"
+                                )
+                                .isArray()) {
+
+                            manifest
+                                    .get(
+                                            "host_permissions"
+                                    )
+                                    .forEach(
+                                            host ->
+                                                    extractedPermissions
+                                                            .add(
+                                                                    "host: "
+                                                                            + host
+                                                                            .asText()
+                                                            )
+                                    );
+                        }
+
                         break;
                     }
                 }
             }
+
         } catch (Exception e) {
-            response.put("status", "ERROR");
-            response.put("message", "Failed to process file: " + e.getMessage());
+
+            response.put(
+                    "status",
+                    "ERROR"
+            );
+
+            response.put(
+                    "message",
+                    "Failed to process manifest: "
+                            + e.getMessage()
+            );
+
             return response;
         }
 
+        // =====================================================
+        // MANIFEST VALIDATION
+        // =====================================================
+
+        if (manifest == null) {
+
+            response.put(
+                    "status",
+                    "ERROR"
+            );
+
+            response.put(
+                    "message",
+                    "manifest.json not found in extension package"
+            );
+
+            return response;
+        }
+
+        // =====================================================
+        // BASIC RISK EXPLANATIONS
+        // =====================================================
+
+        for (String permission :
+                extractedPermissions) {
+
+            String normalized =
+                    permission
+                            .toLowerCase()
+                            .trim();
+
+            // -------------------------------------------------
+            // UNIVERSAL HOST ACCESS
+            // -------------------------------------------------
+
+            if (normalized.contains(
+                    "<all_urls>"
+            )
+                    || normalized.contains(
+                    "host: *://*/*"
+            )
+                    || normalized.contains(
+                    "host: <all_urls>"
+            )) {
+
+                appendIfMissing(
+                        riskExplanations,
+                        "Broad host access declared: Permits reading and altering data across all visited websites."
+                );
+            }
+
+            // -------------------------------------------------
+            // COOKIES
+            // -------------------------------------------------
+
+            if (normalized.equals(
+                    "cookies"
+            )) {
+
+                appendIfMissing(
+                        riskExplanations,
+                        "Cookies access requested: Allows reading and modifying session cookies, increasing session hijacking risk."
+                );
+            }
+
+            // -------------------------------------------------
+            // WEB REQUEST
+            // -------------------------------------------------
+
+            if (normalized.equals(
+                    "webrequest"
+            )) {
+
+                appendIfMissing(
+                        riskExplanations,
+                        "WebRequest API enabled: Grants capability to observe browser network activity."
+                );
+            }
+
+            // -------------------------------------------------
+            // WEB REQUEST BLOCKING
+            // -------------------------------------------------
+
+            if (normalized.equals(
+                    "webrequestblocking"
+            )) {
+
+                appendIfMissing(
+                        riskExplanations,
+                        "WebRequestBlocking permission can modify network requests and represents elevated browser privilege."
+                );
+            }
+
+            // -------------------------------------------------
+            // SCRIPTING
+            // -------------------------------------------------
+
+            if (normalized.equals(
+                    "scripting"
+            )) {
+
+                appendIfMissing(
+                        riskExplanations,
+                        "Scripting permission found: Allows executing scripts in permitted web pages."
+                );
+            }
+        }
+
         if (riskExplanations.isEmpty()) {
-            riskExplanations.add("No high-risk security behaviors or sensitive permissions identified.");
+
+            riskExplanations.add(
+                    "No high-risk security behaviors or sensitive permissions identified."
+            );
         }
 
-        String recommendation = "INSTALL";
+        // =====================================================
+        // IMPORTANT:
+        // TASK 1 + TASK 2 + TASK 3 + TASK 4
+        // ARE NOW HANDLED BY ManifestAnalysisService
+        // =====================================================
+
+        ManifestAnalysisService.AnalysisResult
+                serviceResult;
+
+        try {
+
+            serviceResult =
+                    manifestAnalysisService
+                            .analyzeManifest(
+                                    sandboxDir,
+                                    file
+                            );
+
+        } catch (Exception e) {
+
+            response.put(
+                    "status",
+                    "ERROR"
+            );
+
+            response.put(
+                    "message",
+                    "Manifest security analysis failed: "
+                            + e.getMessage()
+            );
+
+            return response;
+        }
+
+        // =====================================================
+        // GET RESULTS FROM SERVICE
+        // =====================================================
+
+        String name =
+                serviceResult.getName();
+
+        String version =
+                serviceResult.getVersion();
+
+        int analyzedManifestVersion =
+                serviceResult
+                        .getManifestVersion();
+
+        List<String> permissions =
+                serviceResult
+                        .getPermissions();
+
+        List<ManifestAnalysisService.PermissionFinding>
+                permissionFindings =
+                serviceResult
+                        .getPermissionFindings();
+
+        List<String> excessivePermissions =
+                serviceResult
+                        .getExcessivePermissions();
+
+        int leastPrivilegeScore =
+                serviceResult
+                        .getLeastPrivilegeScore();
+
+        int calculatedRiskScore =
+                serviceResult
+                        .getRiskScore();
+
+        String versionDiff =
+                serviceResult
+                        .getVersionDiff();
+
+        String sbomFindings =
+                serviceResult
+                        .getSbomFindings();
+
+        String serviceHash =
+                serviceResult
+                        .getHash();
+
+        // =====================================================
+        // TASK 2 - REMOTE DOMAINS
+        // =====================================================
+
+        List<ManifestAnalysisService.RemoteDomainFinding>
+                remoteDomains =
+                manifestAnalysisService
+                        .analyzeRemoteDomains(
+                                manifest
+                        );
+
+        // =====================================================
+        // RECOMMENDATION
+        // =====================================================
+
+        String recommendation;
+
         if (calculatedRiskScore > 70) {
-            recommendation = "BLOCK";
+
+            recommendation =
+                    "BLOCK";
+
         } else if (calculatedRiskScore > 35) {
-            recommendation = "REVIEW";
-        }
 
-        Set<String> baselinePermissions = Set.of("storage", "activeTab");
-        Set<String> targetPermissions = new HashSet<>(extractedPermissions);
-        Set<String> addedPermissions = new HashSet<>(targetPermissions);
-        addedPermissions.removeAll(baselinePermissions);
-        Set<String> removedPermissions = new HashSet<>(baselinePermissions);
-        removedPermissions.removeAll(targetPermissions);
+            recommendation =
+                    "REVIEW";
 
-        StringBuilder diffBuilder = new StringBuilder();
-        diffBuilder.append("Baseline (v1.0.0) -> Target (v").append(version).append(")\n");
-        if (!addedPermissions.isEmpty()) {
-            diffBuilder.append("[+] Added Permissions: ").append(addedPermissions).append("\n");
-        }
-        if (!removedPermissions.isEmpty()) {
-            diffBuilder.append("[-] Removed Permissions: ").append(removedPermissions).append("\n");
-        }
-        if (addedPermissions.isEmpty() && removedPermissions.isEmpty()) {
-            diffBuilder.append("[=] No permission changes detected between versions.");
-        }
-
-        String sbomFindings;
-        if (calculatedRiskScore > 70) {
-            sbomFindings = "Syft+Grype Vulnerability Scan: Critical CVE detected in bundled npm packages (CVE-2024-5178). Immediate patching required.";
-        } else if (calculatedRiskScore > 35) {
-            sbomFindings = "Syft+Grype Vulnerability Scan: Moderate risk - 1 outdated dependency with known vulnerabilities found.";
         } else {
-            sbomFindings = "Syft+Grype Vulnerability Scan: Clean dependency tree. No critical CVE vulnerabilities discovered.";
+
+            recommendation =
+                    "INSTALL";
         }
 
-        Map<String, Object> analysis = new HashMap<>();
-        analysis.put("name", name);
-        analysis.put("version", version);
-        analysis.put("manifestVersion", manifestVersion);
-        analysis.put("riskScore", calculatedRiskScore);
-        analysis.put("permissions", extractedPermissions);
-        analysis.put("versionDiff", diffBuilder.toString().trim());
-        analysis.put("sbomFindings", sbomFindings);
-        analysis.put("riskExplanations", riskExplanations);
-        analysis.put("recommendation", recommendation);
-        analysis.put("hash", sha256Hash); // Nested hash access
-        analysis.put("fileSize", formattedFileSize); // Nested size string
-        analysis.put("fileSizeBytes", fileSizeInBytes); // Nested size bytes
+        // =====================================================
+        // ANALYSIS RESPONSE
+        // =====================================================
 
-        response.put("filename", filename);
-        response.put("fileSize", formattedFileSize); // Root formatted size string
-        response.put("fileSizeBytes", fileSizeInBytes); // Root raw size bytes
-        response.put("status", calculatedRiskScore > 70 ? "FLAGGED" : "SECURE");
-        response.put("scanId", scanId);
-        response.put("sha256", sha256Hash); // Root sha256 access
-        response.put("hash", sha256Hash);   // Root hash access
-        response.put("analysis", analysis);
+        Map<String, Object> analysis =
+                new LinkedHashMap<>();
 
-        // Save scan history tied specifically to the userEmail
-        String extName = name.equals("Unknown Extension") ? filename : name;
-        ScanHistory historyItem = new ScanHistory(
-            userEmail,
-            extName,
-            calculatedRiskScore,
-            calculatedRiskScore > 35 ? "HIGH" : "LOW",
-            calculatedRiskScore > 70 ? "FLAGGED" : "SECURE",
-            LocalDateTime.now()
+        // =====================================================
+        // BASIC DETAILS
+        // =====================================================
+
+        analysis.put(
+                "name",
+                name
         );
-        scanHistoryRepository.save(historyItem);
+
+        analysis.put(
+                "version",
+                version
+        );
+
+        analysis.put(
+                "manifestVersion",
+                analyzedManifestVersion
+        );
+
+        analysis.put(
+                "riskScore",
+                calculatedRiskScore
+        );
+
+        analysis.put(
+                "permissions",
+                permissions
+        );
+
+        // =====================================================
+        // TASK 1 - LEAST PRIVILEGE
+        // =====================================================
+
+        analysis.put(
+                "permissionFindings",
+                permissionFindings
+        );
+
+        analysis.put(
+                "excessivePermissions",
+                excessivePermissions
+        );
+
+        analysis.put(
+                "leastPrivilegeScore",
+                leastPrivilegeScore
+        );
+
+        // =====================================================
+        // TASK 2 - REMOTE DOMAIN INVENTORY
+        // =====================================================
+
+        analysis.put(
+                "remoteDomains",
+                remoteDomains
+        );
+
+        analysis.put(
+                "remoteDomainCount",
+                remoteDomains.size()
+        );
+
+        // =====================================================
+        // TASK 4 - REAL VERSION DIFF
+        // =====================================================
+
+        /*
+         * IMPORTANT:
+         *
+         * The controller NO LONGER creates a fake baseline.
+         *
+         * versionDiff comes directly from
+         * ManifestAnalysisService.
+         *
+         * First scan:
+         *
+         * Initial Baseline Created
+         * Version: v1.0.0
+         * [=] No previous version available for comparison.
+         *
+         * Second scan:
+         *
+         * Baseline (v1.0.0) -> Target (v1.1.0)
+         * [+] Added Permissions: [...]
+         */
+
+        analysis.put(
+                "versionDiff",
+                versionDiff
+        );
+
+        // =====================================================
+        // TASK 3 - SBOM
+        // =====================================================
+
+        analysis.put(
+                "sbomFindings",
+                sbomFindings
+        );
+
+        // =====================================================
+        // RISK EXPLANATIONS
+        // =====================================================
+
+        analysis.put(
+                "riskExplanations",
+                riskExplanations
+        );
+
+        // =====================================================
+        // RECOMMENDATION
+        // =====================================================
+
+        analysis.put(
+                "recommendation",
+                recommendation
+        );
+
+        // =====================================================
+        // HASH
+        // =====================================================
+
+        analysis.put(
+                "hash",
+                serviceHash.equals("N/A")
+                        ? sha256Hash
+                        : serviceHash
+        );
+
+        // =====================================================
+        // FILE SIZE
+        // =====================================================
+
+        analysis.put(
+                "fileSize",
+                formattedFileSize
+        );
+
+        analysis.put(
+                "fileSizeBytes",
+                fileSizeInBytes
+        );
+
+        // =====================================================
+        // ROOT RESPONSE
+        // =====================================================
+
+        response.put(
+                "filename",
+                filename
+        );
+
+        response.put(
+                "fileSize",
+                formattedFileSize
+        );
+
+        response.put(
+                "fileSizeBytes",
+                fileSizeInBytes
+        );
+
+        response.put(
+                "status",
+                calculatedRiskScore > 70
+                        ? "FLAGGED"
+                        : "SECURE"
+        );
+
+        response.put(
+                "scanId",
+                scanId
+        );
+
+        response.put(
+                "sha256",
+                sha256Hash
+        );
+
+        response.put(
+                "hash",
+                sha256Hash
+        );
+
+        response.put(
+                "analysis",
+                analysis
+        );
+
+        // =====================================================
+        // SAVE SCAN HISTORY
+        // =====================================================
+
+        String historyExtensionName =
+                name.equals(
+                        "Unknown Extension"
+                )
+                        ? filename
+                        : name;
+
+        ScanHistory historyItem =
+                new ScanHistory(
+                        userEmail,
+                        historyExtensionName,
+                        calculatedRiskScore,
+                        calculatedRiskScore > 35
+                                ? "HIGH"
+                                : "LOW",
+                        calculatedRiskScore > 70
+                                ? "FLAGGED"
+                                : "SECURE",
+                        LocalDateTime.now()
+                );
+
+        scanHistoryRepository.save(
+                historyItem
+        );
+
+        // =====================================================
+        // RETURN
+        // =====================================================
 
         return response;
     }
 
-    private String calculateSha256(MultipartFile file) {
+    // =========================================================
+    // SHA-256
+    // =========================================================
+
+    private String calculateSha256(
+            MultipartFile file) {
+
         try {
-            if (file == null || file.isEmpty()) return "N/A";
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hashBytes = digest.digest(file.getBytes());
-            return HexFormat.of().formatHex(hashBytes); // Java 17+
+
+            if (file == null
+                    || file.isEmpty()) {
+
+                return "N/A";
+            }
+
+            MessageDigest digest =
+                    MessageDigest.getInstance(
+                            "SHA-256"
+                    );
+
+            byte[] hashBytes =
+                    digest.digest(
+                            file.getBytes()
+                    );
+
+            return HexFormat
+                    .of()
+                    .formatHex(
+                            hashBytes
+                    );
+
         } catch (Exception e) {
+
             return "N/A";
         }
     }
 
-    private String formatFileSize(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        int exp = (int) (Math.log(bytes) / Math.log(1024));
-        String pre = "KMGTPE".charAt(exp - 1) + "";
-        return String.format("%.1f %sB", bytes / Math.pow(1024, exp), pre);
+    // =========================================================
+    // FILE SIZE
+    // =========================================================
+
+    private String formatFileSize(
+            long bytes) {
+
+        if (bytes < 1024) {
+
+            return bytes + " B";
+        }
+
+        int exp =
+                (int) (
+                        Math.log(bytes)
+                                / Math.log(1024)
+                );
+
+        String pre =
+                "KMGTPE"
+                        .charAt(exp - 1)
+                        + "";
+
+        return String.format(
+                "%.1f %sB",
+                bytes
+                        / Math.pow(
+                                1024,
+                                exp
+                        ),
+                pre
+        );
     }
+
+    // =========================================================
+    // SCAN HISTORY
+    // =========================================================
 
     @GetMapping("/scans/history")
-    public ResponseEntity<List<ScanHistory>> getScanHistory(@RequestParam(value = "userEmail", required = false) String userEmail) {
+    public ResponseEntity<List<ScanHistory>>
+    getScanHistory(
+            @RequestParam(
+                    value = "userEmail",
+                    required = false
+            )
+            String userEmail) {
+
         List<ScanHistory> history;
-        if (userEmail != null && !userEmail.isEmpty()) {
-            history = scanHistoryRepository.findByUserEmailOrderByIdDesc(userEmail);
+
+        if (userEmail != null
+                && !userEmail.isEmpty()) {
+
+            history =
+                    scanHistoryRepository
+                            .findByUserEmailOrderByIdDesc(
+                                    userEmail
+                            );
+
         } else {
-            history = scanHistoryRepository.findAll(Sort.by(Sort.Direction.DESC, "id"));
+
+            history =
+                    scanHistoryRepository.findAll(
+                            Sort.by(
+                                    Sort.Direction.DESC,
+                                    "id"
+                            )
+                    );
         }
-        return ResponseEntity.ok(history);
+
+        return ResponseEntity.ok(
+                history
+        );
     }
+     // =========================================================
+// AUDIT LOGS
+// =========================================================
+
+@GetMapping("/audit-logs")
+public ResponseEntity<List<AuditLog>>
+getAuditLogs(
+        @RequestParam(
+                value = "userEmail",
+                required = false
+        )
+        String userEmail) {
+
+    List<AuditLog> logs;
+
+    if (userEmail != null
+            && !userEmail.isEmpty()) {
+
+        logs =
+                auditLogRepository
+                        .findByUserEmailOrderByIdDesc(
+                                userEmail
+                        );
+
+    } else {
+
+        logs =
+                auditLogRepository.findAll(
+                        Sort.by(
+                                Sort.Direction.DESC,
+                                "id"
+                        )
+                );
+    }
+
+    return ResponseEntity.ok(logs);
+}
+    // =========================================================
+    // ALLOWLIST
+    // =========================================================
 
     @PostMapping("/extensions/allowlist")
-    public ResponseEntity<Map<String, Object>> allowlistExtension(@RequestBody(required = false) Map<String, String> payload) {
-        String scanId = payload != null ? payload.get("scanId") : null;
-        String userEmail = payload != null ? payload.get("userEmail") : null;
-        String filename = payload != null ? payload.get("filename") : "extension.zip";
+    public ResponseEntity<Map<String, Object>>
+    allowlistExtension(
+            @RequestBody(required = false)
+            Map<String, String> payload) {
 
-        if (scanId != null && userEmail != null) {
-            allowlistedScanIds.add(userEmail + "_" + scanId);
-        }
+        String scanId =
+                payload != null
+                        ? payload.get("scanId")
+                        : null;
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("status", "ALLOWLISTED");
-        result.put("message", "Extension " + filename + " has been successfully allowlisted.");
+        String userEmail =
+                payload != null
+                        ? payload.get("userEmail")
+                        : null;
 
-        return ResponseEntity.ok(result);
+        String filename =
+                payload != null
+                        ? payload.get("filename")
+                        : "extension.zip";
+
+       if (scanId != null
+        && userEmail != null) {
+
+    allowlistedScanIds.add(
+            userEmail
+                    + "_"
+                    + scanId
+    );
+
+    AuditLog auditLog =
+            new AuditLog(
+                    userEmail,
+                    scanId,
+                    filename,
+                    "ALLOWLISTED",
+                    LocalDateTime.now()
+            );
+
+    auditLogRepository.save(auditLog);
+}
+
+        Map<String, Object> result =
+                new HashMap<>();
+
+        result.put(
+                "status",
+                "ALLOWLISTED"
+        );
+
+        result.put(
+                "message",
+                "Extension "
+                        + filename
+                        + " has been successfully allowlisted."
+        );
+
+        return ResponseEntity.ok(
+                result
+        );
     }
 
-    @GetMapping("/extensions/download")
-    public ResponseEntity<Resource> downloadExtension(
-            @RequestParam(value = "scanId", required = false) String scanId,
-            @RequestParam(value = "userEmail", required = false) String userEmail) {
-        byte[] fileBytes = null;
-        String filename = "extension.zip";
+  // =========================================================
+// DOWNLOAD EXTENSION
+// =========================================================
 
-        if (scanId != null && fileCache.containsKey(scanId)) {
-            fileBytes = fileCache.get(scanId);
-            filename = filenameCache.getOrDefault(scanId, "extension.zip");
-            if (userEmail != null) {
-                allowlistedScanIds.add(userEmail + "_" + scanId);
-            }
-        } else if (!fileCache.isEmpty()) {
-            String latestKey = fileCache.keySet().stream().reduce((first, second) -> second).orElse(null);
-            if (latestKey != null) {
-                fileBytes = fileCache.get(latestKey);
-                filename = filenameCache.getOrDefault(latestKey, "extension.zip");
-                if (userEmail != null) {
-                    allowlistedScanIds.add(userEmail + "_" + latestKey);
-                }
-            }
-        }
+@GetMapping("/extensions/download")
+public ResponseEntity<Resource> downloadExtension(
+        @RequestParam(
+                value = "scanId",
+                required = true
+        )
+        String scanId) {
 
-        if (fileBytes == null) {
-            return ResponseEntity.badRequest().build();
-        }
-
-        try {
-            ByteArrayResource resource = new ByteArrayResource(fileBytes);
-            return ResponseEntity.ok()
-                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                    .body(resource);
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().build();
-        }
+    if (scanId == null || scanId.isBlank()) {
+        return ResponseEntity.badRequest().build();
     }
 
-    @PostMapping("/extensions/reject")
-    public ResponseEntity<Map<String, Object>> rejectExtension(@RequestBody(required = false) Map<String, String> payload) {
-        String filenameToReject = (payload != null && payload.containsKey("filename")) ? payload.get("filename") : "extension.zip";
-        
-        Map<String, Object> result = new HashMap<>();
-        result.put("status", "REJECTED");
-        result.put("message", "Extension " + filenameToReject + " has been successfully blocked and logged.");
-        
-        return ResponseEntity.ok(result);
+    byte[] fileBytes = fileCache.get(scanId);
+
+    if (fileBytes == null) {
+        return ResponseEntity.notFound().build();
     }
+
+    String filename =
+            filenameCache.getOrDefault(
+                    scanId,
+                    "extension.zip"
+            );
+
+    try {
+
+        ByteArrayResource resource =
+                new ByteArrayResource(fileBytes);
+
+        return ResponseEntity
+                .ok()
+                .contentType(
+                        MediaType.APPLICATION_OCTET_STREAM
+                )
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" +
+                                filename +
+                                "\""
+                )
+                .body(resource);
+
+    } catch (Exception e) {
+
+        return ResponseEntity
+                .internalServerError()
+                .build();
+    }
+}
+
+   // =========================================================
+// REJECT EXTENSION
+// =========================================================
+
+@PostMapping("/extensions/reject")
+public ResponseEntity<Map<String, Object>>
+rejectExtension(
+        @RequestBody(required = false)
+        Map<String, String> payload) {
+
+    String scanId =
+            payload != null
+                    ? payload.get("scanId")
+                    : null;
+
+    String userEmail =
+            payload != null
+                    ? payload.get("userEmail")
+                    : null;
+
+    String filename =
+            payload != null
+                    ? payload.get("filename")
+                    : "extension.zip";
+
+    if (scanId != null
+            && userEmail != null
+            && !scanId.isBlank()
+            && !userEmail.isBlank()) {
+
+        AuditLog auditLog =
+                new AuditLog(
+                        userEmail,
+                        scanId,
+                        filename,
+                        "REJECTED",
+                        LocalDateTime.now()
+                );
+
+        auditLogRepository.save(auditLog);
+    }
+
+    Map<String, Object> result =
+            new HashMap<>();
+
+    result.put(
+            "status",
+            "REJECTED"
+    );
+
+    result.put(
+            "message",
+            "Extension "
+                    + filename
+                    + " has been successfully blocked and logged."
+    );
+
+    return ResponseEntity.ok(
+            result
+    );
+}
+    // =========================================================
+    // DASHBOARD STATS
+    // =========================================================
 
     @GetMapping("/extensions/stats")
-    public ResponseEntity<Map<String, Object>> getDashboardStats(@RequestParam(value = "userEmail", required = false) String userEmail) {
+    public ResponseEntity<Map<String, Object>>
+    getDashboardStats(
+            @RequestParam(
+                    value = "userEmail",
+                    required = false
+            )
+            String userEmail) {
+
         List<ScanHistory> userScans;
-        if (userEmail != null && !userEmail.isEmpty()) {
-            userScans = scanHistoryRepository.findByUserEmailOrderByIdDesc(userEmail);
+
+        if (userEmail != null
+                && !userEmail.isEmpty()) {
+
+            userScans =
+                    scanHistoryRepository
+                            .findByUserEmailOrderByIdDesc(
+                                    userEmail
+                            );
+
         } else {
-            userScans = scanHistoryRepository.findAll();
+
+            userScans =
+                    scanHistoryRepository.findAll();
         }
 
-        int extensionsScanned = userScans.size();
-        long highRiskDetected = userScans.stream().filter(s -> "HIGH".equals(s.getRiskLevel())).count();
-        
-        long userAllowlistedCount = allowlistedScanIds.stream()
-                .filter(id -> userEmail != null && id.startsWith(userEmail + "_"))
-                .count();
+        int extensionsScanned =
+                userScans.size();
 
-        Map<String, Object> stats = new HashMap<>();
-        stats.put("extensionsScanned", extensionsScanned);
-        stats.put("highRiskDetected", (int) highRiskDetected);
-        stats.put("avgScanTime", extensionsScanned > 0 ? "0.6s" : "0.0s");
-        stats.put("allowlisted", (int) userAllowlistedCount);
-        
-        return ResponseEntity.ok(stats);
+        long highRiskDetected =
+                userScans.stream()
+                        .filter(
+                                s ->
+                                        "HIGH".equals(
+                                                s.getRiskLevel()
+                                        )
+                        )
+                        .count();
+
+        long userAllowlistedCount =
+                allowlistedScanIds.stream()
+                        .filter(
+                                id ->
+                                        userEmail != null
+                                                && id.startsWith(
+                                                userEmail
+                                                        + "_"
+                                        )
+                        )
+                        .count();
+
+        Map<String, Object> stats =
+                new HashMap<>();
+
+        stats.put(
+                "extensionsScanned",
+                extensionsScanned
+        );
+
+        stats.put(
+                "highRiskDetected",
+                (int) highRiskDetected
+        );
+
+        stats.put(
+                "avgScanTime",
+                extensionsScanned > 0
+                        ? "0.6s"
+                        : "0.0s"
+        );
+
+        stats.put(
+                "allowlisted",
+                (int) userAllowlistedCount
+        );
+
+        return ResponseEntity.ok(
+                stats
+        );
     }
 
-    @GetMapping("/extensions/download-file")
-    public ResponseEntity<Resource> downloadStoredFile(
-            @RequestParam(value = "filename", defaultValue = "extension.zip") String filename) {
-        try {
-            Path filePath = fileStorageLocation.resolve(filename).normalize();
-            Resource resource = new UrlResource(filePath.toUri());
+    // =========================================================
+    // STORED FILE DOWNLOAD
+    // =========================================================
 
-            if (!resource.exists() || !resource.isReadable()) {
-                return ResponseEntity.notFound().build();
+    @GetMapping("/extensions/download-file")
+    public ResponseEntity<Resource>
+    downloadStoredFile(
+            @RequestParam(
+                    value = "filename",
+                    defaultValue = "extension.zip"
+            )
+            String filename) {
+
+        try {
+
+            Path filePath =
+                    fileStorageLocation
+                            .resolve(filename)
+                            .normalize();
+
+            // =================================================
+            // PATH TRAVERSAL PROTECTION
+            // =================================================
+
+            if (!filePath.startsWith(
+                    fileStorageLocation
+            )) {
+
+                return ResponseEntity
+                        .badRequest()
+                        .build();
             }
 
-            return ResponseEntity.ok()
-                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + resource.getFilename() + "\"")
+            Resource resource =
+                    new UrlResource(
+                            filePath.toUri()
+                    );
+
+            if (!resource.exists()
+                    || !resource.isReadable()) {
+
+                return ResponseEntity
+                        .notFound()
+                        .build();
+            }
+
+            return ResponseEntity
+                    .ok()
+                    .contentType(
+                            MediaType
+                                    .APPLICATION_OCTET_STREAM
+                    )
+                    .header(
+                            HttpHeaders
+                                    .CONTENT_DISPOSITION,
+                            "attachment; filename=\""
+                                    + resource.getFilename()
+                                    + "\""
+                    )
                     .body(resource);
 
         } catch (Exception ex) {
-            return ResponseEntity.internalServerError().build();
+
+            return ResponseEntity
+                    .internalServerError()
+                    .build();
         }
     }
 
-    private void appendIfMissing(List<String> list, String item) {
+    // =========================================================
+    // HELPER
+    // =========================================================
+
+    private void appendIfMissing(
+            List<String> list,
+            String item) {
+
         if (!list.contains(item)) {
+
             list.add(item);
         }
     }
