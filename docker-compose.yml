@@ -1,0 +1,57 @@
+services:
+
+  db:
+    image: postgres:16-alpine
+    container_name: observatory-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: extension_observatory
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - observatory_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d extension_observatory"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: observatory-backend:latest
+    container_name: observatory-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: extension_observatory
+      DB_USER: postgres
+      DB_PASSWORD: ${DB_PASSWORD}
+      APP_JWT_SECRET: ${APP_JWT_SECRET}
+      GRYPE_DB_AUTO_UPDATE: "false"
+      GRYPE_CHECK_FOR_APP_UPDATE: "false"
+    volumes:
+      - observatory_grype_db:/root/.cache/grype/db:ro
+    ports:
+      - "8080:8080"
+
+  frontend:
+    image: observatory-ui:latest
+    container_name: observatory-ui
+    restart: unless-stopped
+    build:
+      context: ../observatory-ui
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+
+volumes:
+  observatory_pgdata:
+  observatory_grype_db:
+    name: observatory_grype_db

@@ -202,9 +202,13 @@ public class ManifestAnalysisService {
         @JsonProperty("permissions")
         private List<String> permissions = new ArrayList<>();
 
-        @JsonProperty("permissionFindings")
-        private List<PermissionFinding> permissionFindings =
-                new ArrayList<>();
+        @JsonProperty("remoteDomains")
+        private List<RemoteDomainFinding> remoteDomains =
+        new ArrayList<>();
+
+@JsonProperty("permissionFindings")
+private List<PermissionFinding> permissionFindings =
+        new ArrayList<>();
 
         @JsonProperty("excessivePermissions")
         private List<String> excessivePermissions =
@@ -229,22 +233,24 @@ public class ManifestAnalysisService {
         }
 
         public AnalysisResult(
-                String name,
-                String version,
-                int manifestVersion,
-                List<String> permissions,
-                List<PermissionFinding> permissionFindings,
-                List<String> excessivePermissions,
-                int leastPrivilegeScore,
-                int riskScore,
-                String versionDiff,
-                String sbomFindings,
-                String hash) {
+        String name,
+        String version,
+        int manifestVersion,
+        List<String> permissions,
+        List<RemoteDomainFinding> remoteDomains,
+        List<PermissionFinding> permissionFindings,
+        List<String> excessivePermissions,
+        int leastPrivilegeScore,
+        int riskScore,
+        String versionDiff,
+        String sbomFindings,
+        String hash) {
 
             this.name = name;
             this.version = version;
             this.manifestVersion = manifestVersion;
             this.permissions = permissions;
+            this.remoteDomains = remoteDomains;
             this.permissionFindings = permissionFindings;
             this.excessivePermissions = excessivePermissions;
             this.leastPrivilegeScore = leastPrivilegeScore;
@@ -268,6 +274,10 @@ public class ManifestAnalysisService {
 
         public List<String> getPermissions() {
             return permissions;
+        }
+
+        public List<RemoteDomainFinding> getRemoteDomains() {
+        return remoteDomains;
         }
 
         public List<PermissionFinding> getPermissionFindings() {
@@ -312,8 +322,12 @@ public class ManifestAnalysisService {
 
         public void setPermissions(List<String> permissions) {
             this.permissions = permissions;
+        
         }
-
+        public void setRemoteDomains(
+        List<RemoteDomainFinding> remoteDomains) {
+    this.remoteDomains = remoteDomains;
+}
         public void setPermissionFindings(
                 List<PermissionFinding> permissionFindings) {
 
@@ -373,19 +387,20 @@ public class ManifestAnalysisService {
 
         if (manifestFile == null || !manifestFile.exists()) {
 
-            return new AnalysisResult(
-                    "Unknown Extension",
-                    "1.0.0",
-                    3,
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    100,
-                    0,
-                    "No baseline available.",
-                    "No dependencies scanned.",
-                    calculatedHash
-            );
+          return new AnalysisResult(
+        "Unknown Extension",
+        "1.0.0",
+        3,
+        List.of(),
+        List.of(),
+        List.of(),
+        List.of(),
+        100,
+        0,
+        "No baseline available.",
+        "No dependencies scanned.",
+        calculatedHash
+);
         }
 
         try {
@@ -648,34 +663,36 @@ public class ManifestAnalysisService {
             // =================================================
 
             return new AnalysisResult(
-                    name,
-                    version,
-                    manifestVersion,
-                    permissions,
-                    permissionFindings,
-                    excessivePermissions,
-                    leastPrivilegeScore,
-                    calculatedRisk,
-                    diffBuilder.toString().trim(),
-                    sbomFindings,
-                    calculatedHash
-            );
+        name,
+        version,
+        manifestVersion,
+        permissions,
+        remoteDomains,
+        permissionFindings,
+        excessivePermissions,
+        leastPrivilegeScore,
+        calculatedRisk,
+        diffBuilder.toString().trim(),
+        sbomFindings,
+        calculatedHash
+);
 
         } catch (IOException e) {
 
-            return new AnalysisResult(
-                    "Error Parsing",
-                    "1.0.0",
-                    3,
-                    List.of(),
-                    List.of(),
-                    List.of(),
-                    100,
-                    0,
-                    "Error reading diff.",
-                    "Error parsing SBOM.",
-                    calculatedHash
-            );
+          return new AnalysisResult(
+        "Error Parsing",
+        "1.0.0",
+        3,
+        List.of(),
+        List.of(),
+        List.of(),
+        List.of(),
+        100,
+        0,
+        "Error reading diff.",
+        "Error parsing SBOM.",
+        calculatedHash
+);
         }
     }
 
@@ -1283,159 +1300,228 @@ public class ManifestAnalysisService {
         );
     }
 
-    private String executeGrypeScan(
-            File sandboxDir) {
+  private String executeGrypeScan(
+        File sandboxDir) {
 
-        if (sandboxDir == null
-                || !sandboxDir.exists()) {
+    if (sandboxDir == null
+            || !sandboxDir.exists()) {
 
-            return "SBOM scan skipped: sandbox directory not found.";
+        return "SBOM scan skipped: sandbox directory not found.";
+    }
+
+    File sbomFile = null;
+
+    try {
+
+        // =====================================================
+        // STEP 1 - GENERATE SBOM USING SYFT
+        // =====================================================
+
+        sbomFile =
+                File.createTempFile(
+                        "observatory-sbom-",
+                        ".json",
+                        sandboxDir
+                );
+
+        ProcessBuilder syftProcessBuilder =
+                new ProcessBuilder(
+                        "syft",
+                        sandboxDir.getAbsolutePath(),
+                        "--select-catalogers",
+                        "javascript",
+                        "--parallelism",
+                        "8",
+                        "-q",
+                        "-o",
+                        "cyclonedx-json"
+                );
+
+        // Disable Syft application update check
+        syftProcessBuilder.environment().put(
+                "SYFT_CHECK_FOR_APP_UPDATE",
+                "false"
+        );
+
+        // Disable file metadata collection
+        syftProcessBuilder.environment().put(
+                "SYFT_FILE_METADATA_SELECTION",
+                "none"
+        );
+
+        syftProcessBuilder.redirectOutput(
+                sbomFile
+        );
+
+        syftProcessBuilder.redirectError(
+                ProcessBuilder.Redirect.DISCARD
+        );
+
+        // -----------------------------------------------------
+        // SYFT TIMING
+        // -----------------------------------------------------
+
+        long syftStart =
+                System.nanoTime();
+
+        Process syftProcess =
+                syftProcessBuilder.start();
+
+        int syftExitCode =
+                syftProcess.waitFor();
+
+        long syftTimeMs =
+                (System.nanoTime() - syftStart)
+                        / 1_000_000;
+
+        System.out.println(
+                "SBOM SCAN - Syft time: "
+                        + syftTimeMs
+                        + " ms"
+        );
+
+        if (syftExitCode != 0) {
+
+            return "Syft SBOM generation failed. Exit code: "
+                    + syftExitCode;
         }
 
-        File sbomFile = null;
+        if (!sbomFile.exists()
+                || sbomFile.length() == 0) {
 
-        try {
+            return "Syft generated an empty SBOM.";
+        }
 
-            // =================================================
-            // STEP 1 - GENERATE SBOM USING SYFT
-            // =================================================
+        // =====================================================
+        // STEP 2 - GRYPE VULNERABILITY SCAN
+        // =====================================================
 
-            sbomFile =
-                    File.createTempFile(
-                            "observatory-sbom-",
-                            ".json",
-                            sandboxDir
-                    );
+        ProcessBuilder grypeProcessBuilder =
+                new ProcessBuilder(
+                        "grype",
+                        "sbom:" + sbomFile.getAbsolutePath(),
+                        "-o",
+                        "json"
+                );
 
-            ProcessBuilder syftProcessBuilder =
-                    new ProcessBuilder(
-                            "C:\\Users\\Kriti\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anchore.Syft_Microsoft.Winget.Source_8wekyb3d8bbwe\\syft.exe",
-                            sandboxDir.getAbsolutePath(),
-                            "-o",
-                            "cyclonedx-json"
-                    );
+        // Use existing local Grype database
+        grypeProcessBuilder.environment().put(
+                "GRYPE_DB_AUTO_UPDATE",
+                "false"
+        );
 
-            syftProcessBuilder.redirectOutput(
-                    sbomFile
-            );
+        // Disable Grype application update check
+        grypeProcessBuilder.environment().put(
+                "GRYPE_CHECK_FOR_APP_UPDATE",
+                "false"
+        );
 
-            syftProcessBuilder.redirectError(
-                    ProcessBuilder.Redirect.DISCARD
-            );
+        grypeProcessBuilder.redirectErrorStream(
+                true
+        );
 
-            Process syftProcess =
-                    syftProcessBuilder.start();
+        // -----------------------------------------------------
+        // GRYPE TIMING
+        // -----------------------------------------------------
 
-            int syftExitCode =
-                    syftProcess.waitFor();
+        long grypeStart =
+                System.nanoTime();
 
-            if (syftExitCode != 0) {
+        Process grypeProcess =
+                grypeProcessBuilder.start();
 
-                return "Syft SBOM generation failed. Exit code: "
-                        + syftExitCode;
-            }
+        StringBuilder grypeOutput =
+                new StringBuilder();
 
-            if (!sbomFile.exists()
-                    || sbomFile.length() == 0) {
+        try (
+                BufferedReader reader =
+                        new BufferedReader(
+                                new InputStreamReader(
+                                        grypeProcess
+                                                .getInputStream()
+                                )
+                        )
+        ) {
 
-                return "Syft generated an empty SBOM.";
-            }
+            String line;
 
-            // =================================================
-            // STEP 2 - GRYPE SCAN
-            // =================================================
-
-            ProcessBuilder grypeProcessBuilder =
-                    new ProcessBuilder(
-                            "C:\\Users\\Kriti\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anchore.Grype_Microsoft.Winget.Source_8wekyb3d8bbwe\\grype.exe",
-                            "sbom:" + sbomFile.getAbsolutePath(),
-                            "-o",
-                            "json"
-                    );
-
-            grypeProcessBuilder.redirectErrorStream(
-                    true
-            );
-
-            Process grypeProcess =
-                    grypeProcessBuilder.start();
-
-            StringBuilder grypeOutput =
-                    new StringBuilder();
-
-            try (
-                    BufferedReader reader =
-                            new BufferedReader(
-                                    new InputStreamReader(
-                                            grypeProcess
-                                                    .getInputStream()
-                                    )
-                            )
+            while (
+                    (line = reader.readLine())
+                            != null
             ) {
 
-                String line;
-
-                while (
-                        (line = reader.readLine())
-                                != null
-                ) {
-
-                    grypeOutput
-                            .append(line)
-                            .append("\n");
-                }
+                grypeOutput
+                        .append(line)
+                        .append("\n");
             }
+        }
 
-            int grypeExitCode =
-                    grypeProcess.waitFor();
+        int grypeExitCode =
+                grypeProcess.waitFor();
 
-            // =================================================
-            // STEP 3 - RETURN RESULT
-            // =================================================
+        long grypeTimeMs =
+                (System.nanoTime() - grypeStart)
+                        / 1_000_000;
 
-            if (grypeOutput.length() == 0) {
+        System.out.println(
+                "SBOM SCAN - Grype time: "
+                        + grypeTimeMs
+                        + " ms"
+        );
 
-                return "Syft SBOM generated successfully, but Grype returned no output.";
-            }
+        System.out.println(
+                "SBOM SCAN - Total Syft + Grype time: "
+                        + (syftTimeMs + grypeTimeMs)
+                        + " ms"
+        );
 
-            return "SYFT SBOM GENERATED: "
-                    + sbomFile.length()
-                    + " bytes\n"
-                    + "GRYPE EXIT CODE: "
-                    + grypeExitCode
-                    + "\n"
-                    + grypeOutput
-                            .toString()
-                            .trim();
+        // =====================================================
+        // STEP 3 - RETURN RESULT
+        // =====================================================
 
-        } catch (Exception e) {
+        if (grypeOutput.length() == 0) {
 
-            return "Syft/Grype CLI execution failed: "
-                    + e.getMessage();
+            return "Syft SBOM generated successfully, but Grype returned no output.";
+        }
 
-        } finally {
+        return "SYFT SBOM GENERATED: "
+                + sbomFile.length()
+                + " bytes\n"
+                + "GRYPE EXIT CODE: "
+                + grypeExitCode
+                + "\n"
+                + grypeOutput
+                        .toString()
+                        .trim();
 
-            // =================================================
-            // CLEAN TEMPORARY SBOM
-            // =================================================
+    } catch (Exception e) {
 
-            if (sbomFile != null
-                    && sbomFile.exists()) {
+        return "Syft/Grype CLI execution failed: "
+                + e.getMessage();
 
-                try {
+    } finally {
 
-                    Files.deleteIfExists(
-                            sbomFile.toPath()
-                    );
+        // =====================================================
+        // CLEAN TEMPORARY SBOM
+        // =====================================================
 
-                } catch (IOException ignored) {
+        if (sbomFile != null
+                && sbomFile.exists()) {
 
-                    // Cleanup failure should not
-                    // break the scan response.
-                }
+            try {
+
+                Files.deleteIfExists(
+                        sbomFile.toPath()
+                );
+
+            } catch (IOException ignored) {
+
+                // Cleanup failure should not
+                // break the scan response.
             }
         }
     }
+}
 
     // =========================================================
     // FIND MANIFEST

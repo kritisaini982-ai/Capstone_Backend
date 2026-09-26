@@ -9,12 +9,15 @@ import com.observatory.backend.repository.ScanHistoryRepository;
 import com.observatory.backend.repository.UserRepository;
 import com.observatory.backend.repository.AuditLogRepository;
 import com.observatory.backend.service.ManifestAnalysisService;
+import com.observatory.backend.service.JwtService;
 
+import jakarta.servlet.http.HttpServletRequest;
+
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
-import org.springframework.core.io.UrlResource;
-import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -24,7 +27,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -34,7 +36,7 @@ import java.util.zip.ZipInputStream;
 
 @RestController
 @RequestMapping("/api/v1")
-@CrossOrigin(origins = "*")
+@CrossOrigin(origins = "${APP_FRONTEND_URL:http://localhost:3000}")
 public class FileUploadController {
 
     @Autowired
@@ -42,6 +44,12 @@ public class FileUploadController {
 
     @Autowired
     private UserRepository userRepository;
+
+    private final PasswordEncoder passwordEncoder =
+            new BCryptPasswordEncoder();
+
+    @Autowired
+    private JwtService jwtService;
 
     @Autowired
     private ManifestAnalysisService manifestAnalysisService;
@@ -59,21 +67,20 @@ public class FileUploadController {
     private final Map<String, String> filenameCache =
             new ConcurrentHashMap<>();
 
+    // Stores which authenticated user owns each scan
+    private final Map<String, String> scanOwnerCache =
+            new ConcurrentHashMap<>();
+
+    // Maps authenticated user + filename to that user's latest scan
+    private final Map<String, String> userFilenameScanCache =
+            new ConcurrentHashMap<>();
+
     // =========================================================
     // ALLOWLIST CACHE
     // =========================================================
 
     private final Set<String> allowlistedScanIds =
             ConcurrentHashMap.newKeySet();
-
-    // =========================================================
-    // FILE STORAGE LOCATION
-    // =========================================================
-
-    private final Path fileStorageLocation =
-            Paths.get("uploads")
-                    .toAbsolutePath()
-                    .normalize();
 
     // =========================================================
     // AUTHENTICATION - LOGIN
@@ -93,35 +100,101 @@ public class FileUploadController {
                 new HashMap<>();
 
         if (email == null || password == null) {
-    response.put("message", "Email and password are required");
-    return ResponseEntity.badRequest().body(response);
-}
 
-if (password.length() < 8) {
-    response.put("message", "Password must be at least 8 characters long");
-    return ResponseEntity.badRequest().body(response);
-}
+            response.put(
+                    "message",
+                    "Email and password are required"
+            );
+
+            return ResponseEntity
+                    .badRequest()
+                    .body(response);
+        }
+
+        if (password.length() < 8) {
+
+            response.put(
+                    "message",
+                    "Password must be at least 8 characters long"
+            );
+
+            return ResponseEntity
+                    .badRequest()
+                    .body(response);
+        }
 
         Optional<User> userOpt =
                 userRepository.findByEmail(email);
 
-        if (userOpt.isPresent()
-                && userOpt.get()
-                .getPassword()
-                .equals(password)) {
+        if (userOpt.isPresent()) {
 
-            response.put(
-                    "token",
-                    "mock-jwt-token-secure-12345"
-            );
+            User user = userOpt.get();
 
-            response.put(
-                    "message",
-                    "Login successful"
-            );
+            String storedPassword =
+                    user.getPassword();
 
-            return ResponseEntity.ok(response);
+            boolean valid = false;
+
+            // =================================================
+            // BCrypt password
+            // =================================================
+
+            if (storedPassword != null
+                    && (
+                    storedPassword.startsWith("$2a$")
+                            || storedPassword.startsWith("$2b$")
+                            || storedPassword.startsWith("$2y$")
+            )) {
+
+                valid =
+                        passwordEncoder.matches(
+                                password,
+                                storedPassword
+                        );
+
+            } else {
+
+                // =================================================
+                // Existing plaintext password migration
+                // =================================================
+
+                valid =
+                        storedPassword != null
+                                && storedPassword.equals(password);
+
+                if (valid) {
+
+                    user.setPassword(
+                            passwordEncoder.encode(password)
+                    );
+
+                    userRepository.save(user);
+                }
+            }
+
+            // =================================================
+            // LOGIN SUCCESS
+            // =================================================
+
+            if (valid) {
+
+                response.put(
+                        "token",
+                        jwtService.generateToken(email)
+                );
+
+                response.put(
+                        "message",
+                        "Login successful"
+                );
+
+                return ResponseEntity.ok(response);
+            }
         }
+
+        // =================================================
+        // LOGIN FAILED
+        // =================================================
 
         response.put(
                 "message",
@@ -162,6 +235,18 @@ if (password.length() < 8) {
                     .body(response);
         }
 
+        if (password.length() < 8) {
+
+            response.put(
+                    "message",
+                    "Password must be at least 8 characters long"
+            );
+
+            return ResponseEntity
+                    .badRequest()
+                    .body(response);
+        }
+
         if (userRepository
                 .findByEmail(email)
                 .isPresent()) {
@@ -176,16 +261,27 @@ if (password.length() < 8) {
                     .body(response);
         }
 
+        // =================================================
+        // STORE BCrypt HASH
+        // =================================================
+
+        String hashedPassword =
+                passwordEncoder.encode(password);
+
         userRepository.save(
                 new User(
                         email,
-                        password
+                        hashedPassword
                 )
         );
 
+        // =================================================
+        // GENERATE JWT
+        // =================================================
+
         response.put(
                 "token",
-                "mock-jwt-token-secure-12345"
+                jwtService.generateToken(email)
         );
 
         response.put(
@@ -207,10 +303,37 @@ if (password.length() < 8) {
                     value = "userEmail",
                     defaultValue = "anonymous"
             )
-            String userEmail) {
+            String userEmail,
+            HttpServletRequest request) {
+
+        // =====================================================
+        // USE JWT IDENTITY - NEVER TRUST REQUEST userEmail
+        // =====================================================
+
+        String authenticatedEmail =
+                getAuthenticatedEmail(request);
 
         Map<String, Object> response =
                 new HashMap<>();
+
+        if (authenticatedEmail == null
+                || authenticatedEmail.isBlank()) {
+
+            response.put(
+                    "status",
+                    "ERROR"
+            );
+
+            response.put(
+                    "message",
+                    "Authenticated user identity is missing"
+            );
+
+            return response;
+        }
+
+        // Use authenticated JWT email from this point onward
+        userEmail = authenticatedEmail;
 
         List<String> riskExplanations =
                 new ArrayList<>();
@@ -244,6 +367,28 @@ if (password.length() < 8) {
             response.put(
                     "message",
                     "Extension file is empty"
+            );
+
+            return response;
+        }
+
+        // =====================================================
+        // MAXIMUM UPLOAD SIZE - 20 MB
+        // =====================================================
+
+        long maxFileSize =
+                20L * 1024 * 1024;
+
+        if (file.getSize() > maxFileSize) {
+
+            response.put(
+                    "status",
+                    "ERROR"
+            );
+
+            response.put(
+                    "message",
+                    "Extension file exceeds the maximum allowed size of 20 MB"
             );
 
             return response;
@@ -329,8 +474,7 @@ if (password.length() < 8) {
                         Files.copy(
                                 extractIn,
                                 target,
-                                java.nio.file
-                                        .StandardCopyOption
+                                java.nio.file.StandardCopyOption
                                         .REPLACE_EXISTING
                         );
                     }
@@ -382,20 +526,27 @@ if (password.length() < 8) {
                 filename
         );
 
+        scanOwnerCache.put(
+                scanId,
+                authenticatedEmail
+        );
+
+        // Map this user's filename to their latest scan
+        String userFilenameKey =
+                authenticatedEmail
+                        + "::"
+                        + filename;
+
+        userFilenameScanCache.put(
+                userFilenameKey,
+                scanId
+        );
+
         // =====================================================
-        // READ MANIFEST FOR BASIC VALIDATION / EXPLANATIONS
+        // READ MANIFEST
         // =====================================================
 
         JsonNode manifest = null;
-
-        String extensionName =
-                "Unknown Extension";
-
-        String extensionVersion =
-                "1.0.0";
-
-        int manifestVersion =
-                3;
 
         List<String> extractedPermissions =
                 new ArrayList<>();
@@ -440,46 +591,6 @@ if (password.length() < 8) {
                                 mapper.readTree(
                                         zipIn
                                 );
-
-                        // =============================================
-                        // NAME
-                        // =============================================
-
-                        if (manifest.has("name")) {
-
-                            extensionName =
-                                    manifest
-                                            .get("name")
-                                            .asText();
-                        }
-
-                        // =============================================
-                        // VERSION
-                        // =============================================
-
-                        if (manifest.has("version")) {
-
-                            extensionVersion =
-                                    manifest
-                                            .get("version")
-                                            .asText();
-                        }
-
-                        // =============================================
-                        // MANIFEST VERSION
-                        // =============================================
-
-                        if (manifest.has(
-                                "manifest_version"
-                        )) {
-
-                            manifestVersion =
-                                    manifest
-                                            .get(
-                                                    "manifest_version"
-                                            )
-                                            .asInt();
-                        }
 
                         // =============================================
                         // PERMISSIONS
@@ -669,9 +780,7 @@ if (password.length() < 8) {
         }
 
         // =====================================================
-        // IMPORTANT:
-        // TASK 1 + TASK 2 + TASK 3 + TASK 4
-        // ARE NOW HANDLED BY ManifestAnalysisService
+        // SECURITY ANALYSIS
         // =====================================================
 
         ManifestAnalysisService.AnalysisResult
@@ -703,7 +812,7 @@ if (password.length() < 8) {
         }
 
         // =====================================================
-        // GET RESULTS FROM SERVICE
+        // GET RESULTS
         // =====================================================
 
         String name =
@@ -750,15 +859,13 @@ if (password.length() < 8) {
                         .getHash();
 
         // =====================================================
-        // TASK 2 - REMOTE DOMAINS
+        // REMOTE DOMAINS
         // =====================================================
 
         List<ManifestAnalysisService.RemoteDomainFinding>
                 remoteDomains =
-                manifestAnalysisService
-                        .analyzeRemoteDomains(
-                                manifest
-                        );
+                serviceResult
+                        .getRemoteDomains();
 
         // =====================================================
         // RECOMMENDATION
@@ -789,10 +896,6 @@ if (password.length() < 8) {
         Map<String, Object> analysis =
                 new LinkedHashMap<>();
 
-        // =====================================================
-        // BASIC DETAILS
-        // =====================================================
-
         analysis.put(
                 "name",
                 name
@@ -819,7 +922,7 @@ if (password.length() < 8) {
         );
 
         // =====================================================
-        // TASK 1 - LEAST PRIVILEGE
+        // LEAST PRIVILEGE
         // =====================================================
 
         analysis.put(
@@ -838,7 +941,7 @@ if (password.length() < 8) {
         );
 
         // =====================================================
-        // TASK 2 - REMOTE DOMAIN INVENTORY
+        // REMOTE DOMAIN INVENTORY
         // =====================================================
 
         analysis.put(
@@ -852,28 +955,8 @@ if (password.length() < 8) {
         );
 
         // =====================================================
-        // TASK 4 - REAL VERSION DIFF
+        // VERSION DIFF
         // =====================================================
-
-        /*
-         * IMPORTANT:
-         *
-         * The controller NO LONGER creates a fake baseline.
-         *
-         * versionDiff comes directly from
-         * ManifestAnalysisService.
-         *
-         * First scan:
-         *
-         * Initial Baseline Created
-         * Version: v1.0.0
-         * [=] No previous version available for comparison.
-         *
-         * Second scan:
-         *
-         * Baseline (v1.0.0) -> Target (v1.1.0)
-         * [+] Added Permissions: [...]
-         */
 
         analysis.put(
                 "versionDiff",
@@ -881,7 +964,7 @@ if (password.length() < 8) {
         );
 
         // =====================================================
-        // TASK 3 - SBOM
+        // SBOM
         // =====================================================
 
         analysis.put(
@@ -991,7 +1074,7 @@ if (password.length() < 8) {
 
         ScanHistory historyItem =
                 new ScanHistory(
-                        userEmail,
+                        authenticatedEmail,
                         historyExtensionName,
                         calculatedRiskScore,
                         calculatedRiskScore > 35
@@ -1006,10 +1089,6 @@ if (password.length() < 8) {
         scanHistoryRepository.save(
                 historyItem
         );
-
-        // =====================================================
-        // RETURN
-        // =====================================================
 
         return response;
     }
@@ -1096,71 +1175,67 @@ if (password.length() < 8) {
                     value = "userEmail",
                     required = false
             )
-            String userEmail) {
+            String userEmail,
+            HttpServletRequest request) {
 
-        List<ScanHistory> history;
+        String authenticatedEmail =
+                getAuthenticatedEmail(request);
 
-        if (userEmail != null
-                && !userEmail.isEmpty()) {
+        if (authenticatedEmail == null
+                || authenticatedEmail.isBlank()) {
 
-            history =
-                    scanHistoryRepository
-                            .findByUserEmailOrderByIdDesc(
-                                    userEmail
-                            );
-
-        } else {
-
-            history =
-                    scanHistoryRepository.findAll(
-                            Sort.by(
-                                    Sort.Direction.DESC,
-                                    "id"
-                            )
-                    );
+            return ResponseEntity
+                    .status(401)
+                    .build();
         }
+
+        List<ScanHistory> history =
+                scanHistoryRepository
+                        .findByUserEmailOrderByIdDesc(
+                                authenticatedEmail
+                        );
 
         return ResponseEntity.ok(
                 history
         );
     }
-     // =========================================================
-// AUDIT LOGS
-// =========================================================
 
-@GetMapping("/audit-logs")
-public ResponseEntity<List<AuditLog>>
-getAuditLogs(
-        @RequestParam(
-                value = "userEmail",
-                required = false
-        )
-        String userEmail) {
+    // =========================================================
+    // AUDIT LOGS
+    // =========================================================
 
-    List<AuditLog> logs;
+    @GetMapping("/audit-logs")
+    public ResponseEntity<List<AuditLog>>
+    getAuditLogs(
+            @RequestParam(
+                    value = "userEmail",
+                    required = false
+            )
+            String userEmail,
+            HttpServletRequest request) {
 
-    if (userEmail != null
-            && !userEmail.isEmpty()) {
+        String authenticatedEmail =
+                getAuthenticatedEmail(request);
 
-        logs =
+        if (authenticatedEmail == null
+                || authenticatedEmail.isBlank()) {
+
+            return ResponseEntity
+                    .status(401)
+                    .build();
+        }
+
+        List<AuditLog> logs =
                 auditLogRepository
                         .findByUserEmailOrderByIdDesc(
-                                userEmail
+                                authenticatedEmail
                         );
 
-    } else {
-
-        logs =
-                auditLogRepository.findAll(
-                        Sort.by(
-                                Sort.Direction.DESC,
-                                "id"
-                        )
-                );
+        return ResponseEntity.ok(
+                logs
+        );
     }
 
-    return ResponseEntity.ok(logs);
-}
     // =========================================================
     // ALLOWLIST
     // =========================================================
@@ -1169,16 +1244,12 @@ getAuditLogs(
     public ResponseEntity<Map<String, Object>>
     allowlistExtension(
             @RequestBody(required = false)
-            Map<String, String> payload) {
+            Map<String, String> payload,
+            HttpServletRequest request) {
 
         String scanId =
                 payload != null
                         ? payload.get("scanId")
-                        : null;
-
-        String userEmail =
-                payload != null
-                        ? payload.get("userEmail")
                         : null;
 
         String filename =
@@ -1186,29 +1257,90 @@ getAuditLogs(
                         ? payload.get("filename")
                         : "extension.zip";
 
-       if (scanId != null
-        && userEmail != null) {
-
-    allowlistedScanIds.add(
-            userEmail
-                    + "_"
-                    + scanId
-    );
-
-    AuditLog auditLog =
-            new AuditLog(
-                    userEmail,
-                    scanId,
-                    filename,
-                    "ALLOWLISTED",
-                    LocalDateTime.now()
-            );
-
-    auditLogRepository.save(auditLog);
-}
+        String authenticatedEmail =
+                getAuthenticatedEmail(request);
 
         Map<String, Object> result =
                 new HashMap<>();
+
+        if (authenticatedEmail == null
+                || authenticatedEmail.isBlank()) {
+
+            result.put(
+                    "status",
+                    "ERROR"
+            );
+
+            result.put(
+                    "message",
+                    "Authenticated user identity is missing"
+            );
+
+            return ResponseEntity
+                    .status(401)
+                    .body(result);
+        }
+
+        if (scanId == null || scanId.isBlank()) {
+
+            result.put(
+                    "status",
+                    "ERROR"
+            );
+
+            result.put(
+                    "message",
+                    "Scan ID is required"
+            );
+
+            return ResponseEntity
+                    .badRequest()
+                    .body(result);
+        }
+
+        // =====================================================
+        // VERIFY SCAN OWNERSHIP
+        // =====================================================
+
+        String ownerEmail =
+                scanOwnerCache.get(scanId);
+
+        if (ownerEmail == null
+                || !authenticatedEmail.equals(ownerEmail)) {
+
+            result.put(
+                    "status",
+                    "ERROR"
+            );
+
+            result.put(
+                    "message",
+                    "You are not authorized to allowlist this scan"
+            );
+
+            return ResponseEntity
+                    .status(403)
+                    .body(result);
+        }
+
+        allowlistedScanIds.add(
+                authenticatedEmail
+                        + "_"
+                        + scanId
+        );
+
+        AuditLog auditLog =
+                new AuditLog(
+                        authenticatedEmail,
+                        scanId,
+                        filename,
+                        "ALLOWLISTED",
+                        LocalDateTime.now()
+                );
+
+        auditLogRepository.save(
+                auditLog
+        );
 
         result.put(
                 "status",
@@ -1227,121 +1359,210 @@ getAuditLogs(
         );
     }
 
-  // =========================================================
-// DOWNLOAD EXTENSION
-// =========================================================
+    // =========================================================
+    // DOWNLOAD EXTENSION
+    // =========================================================
 
-@GetMapping("/extensions/download")
-public ResponseEntity<Resource> downloadExtension(
-        @RequestParam(
-                value = "scanId",
-                required = true
-        )
-        String scanId) {
+    @GetMapping("/extensions/download")
+    public ResponseEntity<Resource>
+    downloadExtension(
+            @RequestParam(
+                    value = "scanId",
+                    required = true
+            )
+            String scanId,
+            HttpServletRequest request) {
 
-    if (scanId == null || scanId.isBlank()) {
-        return ResponseEntity.badRequest().build();
+        if (scanId == null || scanId.isBlank()) {
+
+            return ResponseEntity
+                    .badRequest()
+                    .build();
+        }
+
+        String authenticatedEmail =
+                getAuthenticatedEmail(request);
+
+        if (authenticatedEmail == null
+                || authenticatedEmail.isBlank()) {
+
+            return ResponseEntity
+                    .status(401)
+                    .build();
+        }
+
+        String ownerEmail =
+                scanOwnerCache.get(scanId);
+
+        if (ownerEmail == null
+                || !authenticatedEmail.equals(ownerEmail)) {
+
+            return ResponseEntity
+                    .status(403)
+                    .build();
+        }
+
+        byte[] fileBytes =
+                fileCache.get(scanId);
+
+        if (fileBytes == null) {
+
+            return ResponseEntity
+                    .notFound()
+                    .build();
+        }
+
+        String filename =
+                filenameCache.getOrDefault(
+                        scanId,
+                        "extension.zip"
+                );
+
+        try {
+
+            ByteArrayResource resource =
+                    new ByteArrayResource(
+                            fileBytes
+                    );
+
+            return ResponseEntity
+                    .ok()
+                    .contentType(
+                            MediaType.APPLICATION_OCTET_STREAM
+                    )
+                    .header(
+                            HttpHeaders.CONTENT_DISPOSITION,
+                            "attachment; filename=\""
+                                    + filename
+                                    + "\""
+                    )
+                    .body(resource);
+
+        } catch (Exception e) {
+
+            return ResponseEntity
+                    .internalServerError()
+                    .build();
+        }
     }
 
-    byte[] fileBytes = fileCache.get(scanId);
+    // =========================================================
+    // REJECT EXTENSION
+    // =========================================================
 
-    if (fileBytes == null) {
-        return ResponseEntity.notFound().build();
-    }
+    @PostMapping("/extensions/reject")
+    public ResponseEntity<Map<String, Object>>
+    rejectExtension(
+            @RequestBody(required = false)
+            Map<String, String> payload,
+            HttpServletRequest request) {
 
-    String filename =
-            filenameCache.getOrDefault(
-                    scanId,
-                    "extension.zip"
+        String scanId =
+                payload != null
+                        ? payload.get("scanId")
+                        : null;
+
+        String filename =
+                payload != null
+                        ? payload.get("filename")
+                        : "extension.zip";
+
+        String authenticatedEmail =
+                getAuthenticatedEmail(request);
+
+        Map<String, Object> result =
+                new HashMap<>();
+
+        if (authenticatedEmail == null
+                || authenticatedEmail.isBlank()) {
+
+            result.put(
+                    "status",
+                    "ERROR"
             );
 
-    try {
+            result.put(
+                    "message",
+                    "Authenticated user identity is missing"
+            );
 
-        ByteArrayResource resource =
-                new ByteArrayResource(fileBytes);
+            return ResponseEntity
+                    .status(401)
+                    .body(result);
+        }
 
-        return ResponseEntity
-                .ok()
-                .contentType(
-                        MediaType.APPLICATION_OCTET_STREAM
-                )
-                .header(
-                        HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"" +
-                                filename +
-                                "\""
-                )
-                .body(resource);
+        if (scanId == null || scanId.isBlank()) {
 
-    } catch (Exception e) {
+            result.put(
+                    "status",
+                    "ERROR"
+            );
 
-        return ResponseEntity
-                .internalServerError()
-                .build();
-    }
-}
+            result.put(
+                    "message",
+                    "Scan ID is required"
+            );
 
-   // =========================================================
-// REJECT EXTENSION
-// =========================================================
+            return ResponseEntity
+                    .badRequest()
+                    .body(result);
+        }
 
-@PostMapping("/extensions/reject")
-public ResponseEntity<Map<String, Object>>
-rejectExtension(
-        @RequestBody(required = false)
-        Map<String, String> payload) {
+        // =====================================================
+        // VERIFY SCAN OWNERSHIP
+        // =====================================================
 
-    String scanId =
-            payload != null
-                    ? payload.get("scanId")
-                    : null;
+        String ownerEmail =
+                scanOwnerCache.get(scanId);
 
-    String userEmail =
-            payload != null
-                    ? payload.get("userEmail")
-                    : null;
+        if (ownerEmail == null
+                || !authenticatedEmail.equals(ownerEmail)) {
 
-    String filename =
-            payload != null
-                    ? payload.get("filename")
-                    : "extension.zip";
+            result.put(
+                    "status",
+                    "ERROR"
+            );
 
-    if (scanId != null
-            && userEmail != null
-            && !scanId.isBlank()
-            && !userEmail.isBlank()) {
+            result.put(
+                    "message",
+                    "You are not authorized to reject this scan"
+            );
+
+            return ResponseEntity
+                    .status(403)
+                    .body(result);
+        }
 
         AuditLog auditLog =
                 new AuditLog(
-                        userEmail,
+                        authenticatedEmail,
                         scanId,
                         filename,
                         "REJECTED",
                         LocalDateTime.now()
                 );
 
-        auditLogRepository.save(auditLog);
+        auditLogRepository.save(
+                auditLog
+        );
+
+        result.put(
+                "status",
+                "REJECTED"
+        );
+
+        result.put(
+                "message",
+                "Extension "
+                        + filename
+                        + " has been successfully blocked and logged."
+        );
+
+        return ResponseEntity.ok(
+                result
+        );
     }
 
-    Map<String, Object> result =
-            new HashMap<>();
-
-    result.put(
-            "status",
-            "REJECTED"
-    );
-
-    result.put(
-            "message",
-            "Extension "
-                    + filename
-                    + " has been successfully blocked and logged."
-    );
-
-    return ResponseEntity.ok(
-            result
-    );
-}
     // =========================================================
     // DASHBOARD STATS
     // =========================================================
@@ -1353,24 +1574,38 @@ rejectExtension(
                     value = "userEmail",
                     required = false
             )
-            String userEmail) {
+            String userEmail,
+            HttpServletRequest request) {
 
-        List<ScanHistory> userScans;
+        String authenticatedEmail =
+                getAuthenticatedEmail(request);
 
-        if (userEmail != null
-                && !userEmail.isEmpty()) {
+        Map<String, Object> stats =
+                new HashMap<>();
 
-            userScans =
-                    scanHistoryRepository
-                            .findByUserEmailOrderByIdDesc(
-                                    userEmail
-                            );
+        if (authenticatedEmail == null
+                || authenticatedEmail.isBlank()) {
 
-        } else {
+            stats.put(
+                    "status",
+                    "ERROR"
+            );
 
-            userScans =
-                    scanHistoryRepository.findAll();
+            stats.put(
+                    "message",
+                    "Authenticated user identity is missing"
+            );
+
+            return ResponseEntity
+                    .status(401)
+                    .body(stats);
         }
+
+        List<ScanHistory> userScans =
+                scanHistoryRepository
+                        .findByUserEmailOrderByIdDesc(
+                                authenticatedEmail
+                        );
 
         int extensionsScanned =
                 userScans.size();
@@ -1385,20 +1620,19 @@ rejectExtension(
                         )
                         .count();
 
+        final String finalAuthenticatedEmail =
+                authenticatedEmail;
+
         long userAllowlistedCount =
                 allowlistedScanIds.stream()
                         .filter(
                                 id ->
-                                        userEmail != null
-                                                && id.startsWith(
-                                                userEmail
+                                        id.startsWith(
+                                                finalAuthenticatedEmail
                                                         + "_"
                                         )
                         )
                         .count();
-
-        Map<String, Object> stats =
-                new HashMap<>();
 
         stats.put(
                 "extensionsScanned",
@@ -1438,62 +1672,131 @@ rejectExtension(
                     value = "filename",
                     defaultValue = "extension.zip"
             )
-            String filename) {
+            String filename,
+            HttpServletRequest request) {
 
-        try {
+        // =====================================================
+        // GET AUTHENTICATED USER
+        // =====================================================
 
-            Path filePath =
-                    fileStorageLocation
-                            .resolve(filename)
-                            .normalize();
+        String authenticatedEmail =
+                getAuthenticatedEmail(request);
 
-            // =================================================
-            // PATH TRAVERSAL PROTECTION
-            // =================================================
-
-            if (!filePath.startsWith(
-                    fileStorageLocation
-            )) {
-
-                return ResponseEntity
-                        .badRequest()
-                        .build();
-            }
-
-            Resource resource =
-                    new UrlResource(
-                            filePath.toUri()
-                    );
-
-            if (!resource.exists()
-                    || !resource.isReadable()) {
-
-                return ResponseEntity
-                        .notFound()
-                        .build();
-            }
+        if (authenticatedEmail == null
+                || authenticatedEmail.isBlank()) {
 
             return ResponseEntity
-                    .ok()
-                    .contentType(
-                            MediaType
-                                    .APPLICATION_OCTET_STREAM
-                    )
-                    .header(
-                            HttpHeaders
-                                    .CONTENT_DISPOSITION,
-                            "attachment; filename=\""
-                                    + resource.getFilename()
-                                    + "\""
-                    )
-                    .body(resource);
-
-        } catch (Exception ex) {
-
-            return ResponseEntity
-                    .internalServerError()
+                    .status(401)
                     .build();
         }
+
+        // =====================================================
+        // VALIDATE FILENAME
+        // =====================================================
+
+        if (filename == null
+                || filename.isBlank()) {
+
+            return ResponseEntity
+                    .badRequest()
+                    .build();
+        }
+
+        // =====================================================
+        // FIND THIS USER'S OWN SCAN
+        // =====================================================
+
+        String userFilenameKey =
+                authenticatedEmail
+                        + "::"
+                        + filename;
+
+        String scanId =
+                userFilenameScanCache.get(
+                        userFilenameKey
+                );
+
+        if (scanId == null
+                || scanId.isBlank()) {
+
+            return ResponseEntity
+                    .notFound()
+                    .build();
+        }
+
+        // =====================================================
+        // VERIFY SCAN OWNERSHIP
+        // =====================================================
+
+        String ownerEmail =
+                scanOwnerCache.get(scanId);
+
+        if (ownerEmail == null
+                || !authenticatedEmail.equals(ownerEmail)) {
+
+            return ResponseEntity
+                    .status(403)
+                    .build();
+        }
+
+        // =====================================================
+        // GET CACHED FILE
+        // =====================================================
+
+        byte[] fileBytes =
+                fileCache.get(scanId);
+
+        if (fileBytes == null) {
+
+            return ResponseEntity
+                    .notFound()
+                    .build();
+        }
+
+        String storedFilename =
+                filenameCache.getOrDefault(
+                        scanId,
+                        filename
+                );
+
+        // =====================================================
+        // RETURN FILE
+        // =====================================================
+
+        ByteArrayResource resource =
+                new ByteArrayResource(
+                        fileBytes
+                );
+
+        return ResponseEntity
+                .ok()
+                .contentType(
+                        MediaType.APPLICATION_OCTET_STREAM
+                )
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\""
+                                + storedFilename
+                                + "\""
+                )
+                .body(resource);
+    }
+
+    // =========================================================
+    // AUTHENTICATED USER HELPER
+    // =========================================================
+
+    private String getAuthenticatedEmail(
+            HttpServletRequest request) {
+
+        Object email =
+                request.getAttribute(
+                        "authenticatedEmail"
+                );
+
+        return email != null
+                ? email.toString()
+                : null;
     }
 
     // =========================================================
