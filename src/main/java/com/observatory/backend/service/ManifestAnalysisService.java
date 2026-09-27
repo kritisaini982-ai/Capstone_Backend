@@ -19,13 +19,12 @@ import java.util.stream.Stream;
 @Service
 public class ManifestAnalysisService {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper =
+            new ObjectMapper();
 
     // =========================================================
     // TASK 4 - VERSION DIFF BASELINE STORAGE
     // =========================================================
-    // Stores the latest scanned manifest permissions for each
-    // extension name so the next scan can detect changes.
 
     private final Map<String, ManifestSnapshot> manifestBaselines =
             new HashMap<>();
@@ -200,15 +199,16 @@ public class ManifestAnalysisService {
         private int manifestVersion = 3;
 
         @JsonProperty("permissions")
-        private List<String> permissions = new ArrayList<>();
+        private List<String> permissions =
+                new ArrayList<>();
 
         @JsonProperty("remoteDomains")
         private List<RemoteDomainFinding> remoteDomains =
-        new ArrayList<>();
+                new ArrayList<>();
 
-@JsonProperty("permissionFindings")
-private List<PermissionFinding> permissionFindings =
-        new ArrayList<>();
+        @JsonProperty("permissionFindings")
+        private List<PermissionFinding> permissionFindings =
+                new ArrayList<>();
 
         @JsonProperty("excessivePermissions")
         private List<String> excessivePermissions =
@@ -233,18 +233,18 @@ private List<PermissionFinding> permissionFindings =
         }
 
         public AnalysisResult(
-        String name,
-        String version,
-        int manifestVersion,
-        List<String> permissions,
-        List<RemoteDomainFinding> remoteDomains,
-        List<PermissionFinding> permissionFindings,
-        List<String> excessivePermissions,
-        int leastPrivilegeScore,
-        int riskScore,
-        String versionDiff,
-        String sbomFindings,
-        String hash) {
+                String name,
+                String version,
+                int manifestVersion,
+                List<String> permissions,
+                List<RemoteDomainFinding> remoteDomains,
+                List<PermissionFinding> permissionFindings,
+                List<String> excessivePermissions,
+                int leastPrivilegeScore,
+                int riskScore,
+                String versionDiff,
+                String sbomFindings,
+                String hash) {
 
             this.name = name;
             this.version = version;
@@ -277,7 +277,7 @@ private List<PermissionFinding> permissionFindings =
         }
 
         public List<RemoteDomainFinding> getRemoteDomains() {
-        return remoteDomains;
+            return remoteDomains;
         }
 
         public List<PermissionFinding> getPermissionFindings() {
@@ -320,39 +320,54 @@ private List<PermissionFinding> permissionFindings =
             this.manifestVersion = manifestVersion;
         }
 
-        public void setPermissions(List<String> permissions) {
+        public void setPermissions(
+                List<String> permissions) {
+
             this.permissions = permissions;
-        
         }
+
         public void setRemoteDomains(
-        List<RemoteDomainFinding> remoteDomains) {
-    this.remoteDomains = remoteDomains;
-}
+                List<RemoteDomainFinding> remoteDomains) {
+
+            this.remoteDomains = remoteDomains;
+        }
+
         public void setPermissionFindings(
                 List<PermissionFinding> permissionFindings) {
 
-            this.permissionFindings = permissionFindings;
+            this.permissionFindings =
+                    permissionFindings;
         }
 
         public void setExcessivePermissions(
                 List<String> excessivePermissions) {
 
-            this.excessivePermissions = excessivePermissions;
+            this.excessivePermissions =
+                    excessivePermissions;
         }
 
-        public void setLeastPrivilegeScore(int leastPrivilegeScore) {
-            this.leastPrivilegeScore = leastPrivilegeScore;
+        public void setLeastPrivilegeScore(
+                int leastPrivilegeScore) {
+
+            this.leastPrivilegeScore =
+                    leastPrivilegeScore;
         }
 
-        public void setRiskScore(int riskScore) {
+        public void setRiskScore(
+                int riskScore) {
+
             this.riskScore = riskScore;
         }
 
-        public void setVersionDiff(String versionDiff) {
+        public void setVersionDiff(
+                String versionDiff) {
+
             this.versionDiff = versionDiff;
         }
 
-        public void setSbomFindings(String sbomFindings) {
+        public void setSbomFindings(
+                String sbomFindings) {
+
             this.sbomFindings = sbomFindings;
         }
 
@@ -376,31 +391,35 @@ private List<PermissionFinding> permissionFindings =
         // =====================================================
 
         if (file != null && !file.isEmpty()) {
-            calculatedHash = calculateSha256(file);
+
+            calculatedHash =
+                    calculateSha256(file);
         }
 
         // =====================================================
         // FIND MANIFEST
         // =====================================================
 
-        File manifestFile = findManifestFile(sandboxDir);
+        File manifestFile =
+                findManifestFile(sandboxDir);
 
-        if (manifestFile == null || !manifestFile.exists()) {
+        if (manifestFile == null
+                || !manifestFile.exists()) {
 
-          return new AnalysisResult(
-        "Unknown Extension",
-        "1.0.0",
-        3,
-        List.of(),
-        List.of(),
-        List.of(),
-        List.of(),
-        100,
-        0,
-        "No baseline available.",
-        "No dependencies scanned.",
-        calculatedHash
-);
+            return new AnalysisResult(
+                    "Unknown Extension",
+                    "1.0.0",
+                    3,
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    100,
+                    0,
+                    "No baseline available.",
+                    "No dependencies scanned.",
+                    calculatedHash
+            );
         }
 
         try {
@@ -410,15 +429,21 @@ private List<PermissionFinding> permissionFindings =
             // =================================================
 
             JsonNode root =
-                    objectMapper.readTree(manifestFile);
+                    objectMapper.readTree(
+                            manifestFile
+                    );
 
             String name =
                     root.path("name")
-                            .asText("Test Extension");
+                            .asText(
+                                    "Test Extension"
+                            );
 
             String version =
                     root.path("version")
-                            .asText("1.0.0");
+                            .asText(
+                                    "1.0.0"
+                            );
 
             int manifestVersion =
                     root.path("manifest_version")
@@ -435,7 +460,9 @@ private List<PermissionFinding> permissionFindings =
                     && root.get("permissions").isArray()) {
 
                 root.get("permissions").forEach(
-                        p -> permissions.add(p.asText())
+                        p -> permissions.add(
+                                p.asText()
+                        )
                 );
             }
 
@@ -448,7 +475,8 @@ private List<PermissionFinding> permissionFindings =
 
                 root.get("host_permissions").forEach(
                         hp -> permissions.add(
-                                "host: " + hp.asText()
+                                "host: "
+                                        + hp.asText()
                         )
                 );
             }
@@ -458,12 +486,18 @@ private List<PermissionFinding> permissionFindings =
             // =================================================
 
             List<PermissionFinding> permissionFindings =
-                    analyzeLeastPrivilege(permissions);
+                    analyzeLeastPrivilege(
+                            permissions
+                    );
 
             List<String> excessivePermissions =
                     permissionFindings.stream()
-                            .filter(PermissionFinding::isExcessive)
-                            .map(PermissionFinding::getPermission)
+                            .filter(
+                                    PermissionFinding::isExcessive
+                            )
+                            .map(
+                                    PermissionFinding::getPermission
+                            )
                             .toList();
 
             int leastPrivilegeScore =
@@ -485,25 +519,29 @@ private List<PermissionFinding> permissionFindings =
             Set<String> normalizedTargetPermissions =
                     new TreeSet<>();
 
-            for (String permission : permissions) {
+            for (String permission :
+                    permissions) {
 
                 if (permission == null) {
                     continue;
                 }
 
                 String normalized =
-                        permission.trim().toLowerCase();
+                        permission
+                                .trim()
+                                .toLowerCase();
 
                 if (!normalized.isEmpty()) {
+
                     normalizedTargetPermissions.add(
                             normalized
                     );
                 }
             }
 
-            // -------------------------------------------------
+            // =================================================
             // GET PREVIOUS BASELINE
-            // -------------------------------------------------
+            // =================================================
 
             ManifestSnapshot previousSnapshot =
                     manifestBaselines.get(name);
@@ -513,13 +551,13 @@ private List<PermissionFinding> permissionFindings =
 
             if (previousSnapshot == null) {
 
-                // =================================================
-                // FIRST SCAN
-                // =================================================
-
                 diffBuilder
-                        .append("Initial Baseline Created\n")
-                        .append("Version: v")
+                        .append(
+                                "Initial Baseline Created\n"
+                        )
+                        .append(
+                                "Version: v"
+                        )
                         .append(version)
                         .append("\n")
                         .append(
@@ -527,10 +565,6 @@ private List<PermissionFinding> permissionFindings =
                         );
 
             } else {
-
-                // =================================================
-                // COMPARE AGAINST PREVIOUS SCAN
-                // =================================================
 
                 Set<String> addedPermissions =
                         new TreeSet<>(
@@ -551,39 +585,57 @@ private List<PermissionFinding> permissionFindings =
                 );
 
                 diffBuilder
-                        .append("Baseline (v")
-                        .append(previousSnapshot.version)
-                        .append(") -> Target (v")
-                        .append(version)
-                        .append(")\n");
+                        .append(
+                                "Baseline (v"
+                        )
+                        .append(
+                                previousSnapshot.version
+                        )
+                        .append(
+                                ") -> Target (v"
+                        )
+                        .append(
+                                version
+                        )
+                        .append(
+                                ")\n"
+                        );
 
-                // -------------------------------------------------
+                // =============================================
                 // ADDED PERMISSIONS
-                // -------------------------------------------------
+                // =============================================
 
                 if (!addedPermissions.isEmpty()) {
 
                     diffBuilder
-                            .append("[+] Added Permissions: ")
-                            .append(addedPermissions)
+                            .append(
+                                    "[+] Added Permissions: "
+                            )
+                            .append(
+                                    addedPermissions
+                            )
                             .append("\n");
                 }
 
-                // -------------------------------------------------
+                // =============================================
                 // REMOVED PERMISSIONS
-                // -------------------------------------------------
+                // =============================================
 
                 if (!removedPermissions.isEmpty()) {
 
                     diffBuilder
-                            .append("[-] Removed Permissions: ")
-                            .append(removedPermissions)
+                            .append(
+                                    "[-] Removed Permissions: "
+                            )
+                            .append(
+                                    removedPermissions
+                            )
                             .append("\n");
                 }
 
-                // -------------------------------------------------
+                // =============================================
                 // NO CHANGES
-                // -------------------------------------------------
+                // =============================================
 
                 if (addedPermissions.isEmpty()
                         && removedPermissions.isEmpty()) {
@@ -612,10 +664,13 @@ private List<PermissionFinding> permissionFindings =
 
             int calculatedRisk = 10;
 
-            for (String perm : permissions) {
+            for (String perm :
+                    permissions) {
 
                 String normalized =
-                        perm.trim().toLowerCase();
+                        perm
+                                .trim()
+                                .toLowerCase();
 
                 if (normalized.equals("storage")
                         || normalized.equals("activetab")) {
@@ -629,7 +684,9 @@ private List<PermissionFinding> permissionFindings =
 
                 } else if (
                         normalized.contains("<all_urls>")
-                                || normalized.contains("*://*/*")) {
+                                || normalized.contains(
+                                "*://*/*"
+                )) {
 
                     calculatedRisk += 35;
                 }
@@ -663,36 +720,38 @@ private List<PermissionFinding> permissionFindings =
             // =================================================
 
             return new AnalysisResult(
-        name,
-        version,
-        manifestVersion,
-        permissions,
-        remoteDomains,
-        permissionFindings,
-        excessivePermissions,
-        leastPrivilegeScore,
-        calculatedRisk,
-        diffBuilder.toString().trim(),
-        sbomFindings,
-        calculatedHash
-);
+                    name,
+                    version,
+                    manifestVersion,
+                    permissions,
+                    remoteDomains,
+                    permissionFindings,
+                    excessivePermissions,
+                    leastPrivilegeScore,
+                    calculatedRisk,
+                    diffBuilder
+                            .toString()
+                            .trim(),
+                    sbomFindings,
+                    calculatedHash
+            );
 
         } catch (IOException e) {
 
-          return new AnalysisResult(
-        "Error Parsing",
-        "1.0.0",
-        3,
-        List.of(),
-        List.of(),
-        List.of(),
-        List.of(),
-        100,
-        0,
-        "Error reading diff.",
-        "Error parsing SBOM.",
-        calculatedHash
-);
+            return new AnalysisResult(
+                    "Error Parsing",
+                    "1.0.0",
+                    3,
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    100,
+                    0,
+                    "Error reading diff.",
+                    "Error parsing SBOM.",
+                    calculatedHash
+            );
         }
     }
 
@@ -706,14 +765,17 @@ private List<PermissionFinding> permissionFindings =
         List<PermissionFinding> findings =
                 new ArrayList<>();
 
-        for (String permission : permissions) {
+        for (String permission :
+                permissions) {
 
             if (permission == null) {
                 continue;
             }
 
             String normalized =
-                    permission.trim().toLowerCase();
+                    permission
+                            .trim()
+                            .toLowerCase();
 
             // =================================================
             // STORAGE
@@ -876,7 +938,8 @@ private List<PermissionFinding> permissionFindings =
 
         int penalty = 0;
 
-        for (PermissionFinding finding : findings) {
+        for (PermissionFinding finding :
+                findings) {
 
             if (!finding.isExcessive()) {
                 continue;
@@ -1011,13 +1074,18 @@ private List<PermissionFinding> permissionFindings =
         if (root.has("externally_connectable")) {
 
             JsonNode externallyConnectable =
-                    root.get("externally_connectable");
+                    root.get(
+                            "externally_connectable"
+                    );
 
             if (externallyConnectable.has("matches")
-                    && externallyConnectable.get("matches").isArray()) {
+                    && externallyConnectable
+                    .get("matches")
+                    .isArray()) {
 
                 for (JsonNode match :
-                        externallyConnectable.get("matches")) {
+                        externallyConnectable
+                                .get("matches")) {
 
                     String value =
                             match.asText();
@@ -1052,7 +1120,9 @@ private List<PermissionFinding> permissionFindings =
         }
 
         String normalized =
-                value.trim().toLowerCase();
+                value
+                        .trim()
+                        .toLowerCase();
 
         return normalized.startsWith("http://")
                 || normalized.startsWith("https://")
@@ -1270,7 +1340,8 @@ private List<PermissionFinding> permissionFindings =
             StringBuilder sb =
                     new StringBuilder();
 
-            for (byte b : hashBytes) {
+            for (byte b :
+                    hashBytes) {
 
                 sb.append(
                         String.format(
@@ -1300,228 +1371,555 @@ private List<PermissionFinding> permissionFindings =
         );
     }
 
-  private String executeGrypeScan(
-        File sandboxDir) {
+    private String executeGrypeScan(
+            File sandboxDir) {
 
-    if (sandboxDir == null
-            || !sandboxDir.exists()) {
+        if (sandboxDir == null
+                || !sandboxDir.exists()) {
 
-        return "SBOM scan skipped: sandbox directory not found.";
-    }
-
-    File sbomFile = null;
-
-    try {
-
-        // =====================================================
-        // STEP 1 - GENERATE SBOM USING SYFT
-        // =====================================================
-
-        sbomFile =
-                File.createTempFile(
-                        "observatory-sbom-",
-                        ".json",
-                        sandboxDir
-                );
-
-        ProcessBuilder syftProcessBuilder =
-                new ProcessBuilder(
-                        "syft",
-                        sandboxDir.getAbsolutePath(),
-                        "--select-catalogers",
-                        "javascript",
-                        "--parallelism",
-                        "8",
-                        "-q",
-                        "-o",
-                        "cyclonedx-json"
-                );
-
-        // Disable Syft application update check
-        syftProcessBuilder.environment().put(
-                "SYFT_CHECK_FOR_APP_UPDATE",
-                "false"
-        );
-
-        // Disable file metadata collection
-        syftProcessBuilder.environment().put(
-                "SYFT_FILE_METADATA_SELECTION",
-                "none"
-        );
-
-        syftProcessBuilder.redirectOutput(
-                sbomFile
-        );
-
-        syftProcessBuilder.redirectError(
-                ProcessBuilder.Redirect.DISCARD
-        );
-
-        // -----------------------------------------------------
-        // SYFT TIMING
-        // -----------------------------------------------------
-
-        long syftStart =
-                System.nanoTime();
-
-        Process syftProcess =
-                syftProcessBuilder.start();
-
-        int syftExitCode =
-                syftProcess.waitFor();
-
-        long syftTimeMs =
-                (System.nanoTime() - syftStart)
-                        / 1_000_000;
-
-        System.out.println(
-                "SBOM SCAN - Syft time: "
-                        + syftTimeMs
-                        + " ms"
-        );
-
-        if (syftExitCode != 0) {
-
-            return "Syft SBOM generation failed. Exit code: "
-                    + syftExitCode;
+            return "SBOM scan skipped: sandbox directory not found.";
         }
 
-        if (!sbomFile.exists()
-                || sbomFile.length() == 0) {
+        File sbomFile = null;
 
-            return "Syft generated an empty SBOM.";
-        }
+        try {
 
-        // =====================================================
-        // STEP 2 - GRYPE VULNERABILITY SCAN
-        // =====================================================
+            // =================================================
+            // STEP 1 - GENERATE SBOM USING SYFT
+            // =================================================
 
-        ProcessBuilder grypeProcessBuilder =
-                new ProcessBuilder(
-                        "grype",
-                        "sbom:" + sbomFile.getAbsolutePath(),
-                        "-o",
-                        "json"
-                );
+            sbomFile =
+                    File.createTempFile(
+                            "observatory-sbom-",
+                            ".json",
+                            sandboxDir
+                    );
 
-        // Use existing local Grype database
-        grypeProcessBuilder.environment().put(
-                "GRYPE_DB_AUTO_UPDATE",
-                "false"
-        );
+            ProcessBuilder syftProcessBuilder =
+                    new ProcessBuilder(
+                            "syft",
+                            sandboxDir.getAbsolutePath(),
+                            "--select-catalogers",
+                            "javascript",
+                            "--parallelism",
+                            "8",
+                            "-q",
+                            "-o",
+                            "cyclonedx-json"
+                    );
 
-        // Disable Grype application update check
-        grypeProcessBuilder.environment().put(
-                "GRYPE_CHECK_FOR_APP_UPDATE",
-                "false"
-        );
+            // Disable Syft application update check
+            syftProcessBuilder.environment().put(
+                    "SYFT_CHECK_FOR_APP_UPDATE",
+                    "false"
+            );
 
-        grypeProcessBuilder.redirectErrorStream(
-                true
-        );
+            // Disable file metadata collection
+            syftProcessBuilder.environment().put(
+                    "SYFT_FILE_METADATA_SELECTION",
+                    "none"
+            );
 
-        // -----------------------------------------------------
-        // GRYPE TIMING
-        // -----------------------------------------------------
+            syftProcessBuilder.redirectOutput(
+                    sbomFile
+            );
 
-        long grypeStart =
-                System.nanoTime();
+            syftProcessBuilder.redirectError(
+                    ProcessBuilder.Redirect.DISCARD
+            );
 
-        Process grypeProcess =
-                grypeProcessBuilder.start();
+            // -------------------------------------------------
+            // SYFT TIMING
+            // -------------------------------------------------
 
-        StringBuilder grypeOutput =
-                new StringBuilder();
+            long syftStart =
+                    System.nanoTime();
 
-        try (
-                BufferedReader reader =
-                        new BufferedReader(
-                                new InputStreamReader(
-                                        grypeProcess
-                                                .getInputStream()
-                                )
-                        )
-        ) {
+            Process syftProcess =
+                    syftProcessBuilder.start();
 
-            String line;
+            int syftExitCode =
+                    syftProcess.waitFor();
 
-            while (
-                    (line = reader.readLine())
-                            != null
-            ) {
+            long syftTimeMs =
+                    (System.nanoTime()
+                            - syftStart)
+                            / 1_000_000;
 
-                grypeOutput
-                        .append(line)
-                        .append("\n");
+            System.out.println(
+                    "SBOM SCAN - Syft time: "
+                            + syftTimeMs
+                            + " ms"
+            );
+
+            if (syftExitCode != 0) {
+
+                return "Syft SBOM generation failed. Exit code: "
+                        + syftExitCode;
             }
-        }
 
-        int grypeExitCode =
-                grypeProcess.waitFor();
+            if (!sbomFile.exists()
+                    || sbomFile.length() == 0) {
 
-        long grypeTimeMs =
-                (System.nanoTime() - grypeStart)
-                        / 1_000_000;
+                return "Syft generated an empty SBOM.";
+            }
 
-        System.out.println(
-                "SBOM SCAN - Grype time: "
-                        + grypeTimeMs
-                        + " ms"
-        );
+            // =================================================
+            // STEP 2 - READ ACTUAL SBOM COMPONENTS
+            // =================================================
 
-        System.out.println(
-                "SBOM SCAN - Total Syft + Grype time: "
-                        + (syftTimeMs + grypeTimeMs)
-                        + " ms"
-        );
+            StringBuilder report =
+                    new StringBuilder();
 
-        // =====================================================
-        // STEP 3 - RETURN RESULT
-        // =====================================================
-
-        if (grypeOutput.length() == 0) {
-
-            return "Syft SBOM generated successfully, but Grype returned no output.";
-        }
-
-        return "SYFT SBOM GENERATED: "
-                + sbomFile.length()
-                + " bytes\n"
-                + "GRYPE EXIT CODE: "
-                + grypeExitCode
-                + "\n"
-                + grypeOutput
-                        .toString()
-                        .trim();
-
-    } catch (Exception e) {
-
-        return "Syft/Grype CLI execution failed: "
-                + e.getMessage();
-
-    } finally {
-
-        // =====================================================
-        // CLEAN TEMPORARY SBOM
-        // =====================================================
-
-        if (sbomFile != null
-                && sbomFile.exists()) {
+            report.append(
+                    "SYFT SBOM GENERATED: "
+            )
+            .append(
+                    sbomFile.length()
+            )
+            .append(
+                    " bytes\n"
+            );
 
             try {
 
-                Files.deleteIfExists(
-                        sbomFile.toPath()
+                JsonNode sbomRoot =
+                        objectMapper.readTree(
+                                Files.readString(
+                                        sbomFile.toPath()
+                                )
+                        );
+
+                JsonNode components =
+                        sbomRoot.path(
+                                "components"
+                        );
+
+                int componentCount =
+                        components.isArray()
+                                ? components.size()
+                                : 0;
+
+                report.append(
+                        "SBOM COMPONENTS DETECTED: "
+                )
+                .append(
+                        componentCount
+                )
+                .append(
+                        "\n"
                 );
 
-            } catch (IOException ignored) {
+                if (componentCount == 0) {
 
-                // Cleanup failure should not
-                // break the scan response.
+                    report.append(
+                            "No dependency components were identified by Syft.\n"
+                    );
+
+                } else {
+
+                    report.append(
+                            "\nDetected Components:\n"
+                    );
+
+                    int componentIndex = 1;
+
+                    for (JsonNode component :
+                            components) {
+
+                        String name =
+                                component.path(
+                                        "name"
+                                ).asText(
+                                        "Unknown"
+                                );
+
+                        String version =
+                                component.path(
+                                        "version"
+                                ).asText(
+                                        "Unknown"
+                                );
+
+                        String type =
+                                component.path(
+                                        "type"
+                                ).asText(
+                                        "Unknown"
+                                );
+
+                        String purl =
+                                component.path(
+                                        "purl"
+                                ).asText(
+                                        ""
+                                );
+
+                        report.append(
+                                componentIndex
+                        )
+                        .append(
+                                ". "
+                        )
+                        .append(
+                                name
+                        )
+                        .append(
+                                "@"
+                        )
+                        .append(
+                                version
+                        )
+                        .append(
+                                " | type="
+                        )
+                        .append(
+                                type
+                        );
+
+                        if (!purl.isBlank()) {
+
+                            report.append(
+                                    " | purl="
+                            )
+                            .append(
+                                    purl
+                            );
+                        }
+
+                        report.append(
+                                "\n"
+                        );
+
+                        componentIndex++;
+                    }
+                }
+
+            } catch (Exception sbomParseException) {
+
+                report.append(
+                        "SBOM component parsing failed: "
+                )
+                .append(
+                        sbomParseException.getMessage()
+                )
+                .append(
+                        "\n"
+                );
+            }
+
+            // =================================================
+            // STEP 3 - GRYPE VULNERABILITY SCAN
+            // =================================================
+
+            ProcessBuilder grypeProcessBuilder =
+                    new ProcessBuilder(
+                            "grype",
+                            "sbom:"
+                                    + sbomFile.getAbsolutePath(),
+                            "-o",
+                            "json"
+                    );
+
+            // Use existing local Grype database
+            grypeProcessBuilder.environment().put(
+                    "GRYPE_DB_AUTO_UPDATE",
+                    "false"
+            );
+
+            // Disable Grype application update check
+            grypeProcessBuilder.environment().put(
+                    "GRYPE_CHECK_FOR_APP_UPDATE",
+                    "false"
+            );
+
+            grypeProcessBuilder.redirectErrorStream(
+                    true
+            );
+
+            // -------------------------------------------------
+            // GRYPE TIMING
+            // -------------------------------------------------
+
+            long grypeStart =
+                    System.nanoTime();
+
+            Process grypeProcess =
+                    grypeProcessBuilder.start();
+
+            StringBuilder grypeOutput =
+                    new StringBuilder();
+
+            try (
+                    BufferedReader reader =
+                            new BufferedReader(
+                                    new InputStreamReader(
+                                            grypeProcess
+                                                    .getInputStream()
+                                    )
+                            )
+            ) {
+
+                String line;
+
+                while (
+                        (line =
+                                reader.readLine())
+                                != null
+                ) {
+
+                    grypeOutput
+                            .append(line)
+                            .append("\n");
+                }
+            }
+
+            int grypeExitCode =
+                    grypeProcess.waitFor();
+
+            long grypeTimeMs =
+                    (System.nanoTime()
+                            - grypeStart)
+                            / 1_000_000;
+
+            System.out.println(
+                    "SBOM SCAN - Grype time: "
+                            + grypeTimeMs
+                            + " ms"
+            );
+
+            System.out.println(
+                    "SBOM SCAN - Total Syft + Grype time: "
+                            + (
+                            syftTimeMs
+                                    + grypeTimeMs
+                    )
+                            + " ms"
+            );
+
+            // =================================================
+            // STEP 4 - GRYPE RESULT SUMMARY
+            // =================================================
+
+            if (grypeOutput.length() == 0) {
+
+                report.append(
+                        "\nGRYPE EXIT CODE: "
+                )
+                .append(
+                        grypeExitCode
+                )
+                .append(
+                        "\n"
+                )
+                .append(
+                        "GRYPE VULNERABILITY MATCHES: 0\n"
+                )
+                .append(
+                        "Grype returned no output."
+                );
+
+                return report.toString().trim();
+            }
+
+            report.append(
+                    "\nGRYPE EXIT CODE: "
+            )
+            .append(
+                    grypeExitCode
+            )
+            .append(
+                    "\n"
+            );
+
+            try {
+
+                JsonNode grypeRoot =
+                        objectMapper.readTree(
+                                grypeOutput
+                                        .toString()
+                                        .trim()
+                        );
+
+                JsonNode matches =
+                        grypeRoot.path(
+                                "matches"
+                        );
+
+                int matchCount =
+                        matches.isArray()
+                                ? matches.size()
+                                : 0;
+
+                report.append(
+                        "GRYPE VULNERABILITY MATCHES: "
+                )
+                .append(
+                        matchCount
+                )
+                .append(
+                        "\n"
+                );
+
+                if (matchCount == 0) {
+
+                    report.append(
+                            "No known vulnerabilities were identified in the detected SBOM components."
+                    );
+
+                } else {
+
+                    report.append(
+                            "\nVulnerability Findings:\n"
+                    );
+
+                    int findingIndex = 1;
+
+                    for (JsonNode match :
+                            matches) {
+
+                        JsonNode vulnerability =
+                                match.path(
+                                        "vulnerability"
+                                );
+
+                        JsonNode artifact =
+                                match.path(
+                                        "artifact"
+                                );
+
+                        String vulnerabilityId =
+                                vulnerability.path(
+                                        "id"
+                                ).asText(
+                                        "Unknown"
+                                );
+
+                        String severity =
+                                vulnerability.path(
+                                        "severity"
+                                ).asText(
+                                        "Unknown"
+                                );
+
+                        String packageName =
+                                artifact.path(
+                                        "name"
+                                ).asText(
+                                        "Unknown"
+                                );
+
+                        String installedVersion =
+                                artifact.path(
+                                        "version"
+                                ).asText(
+                                        "Unknown"
+                                );
+
+                        String fixVersion =
+                                "No fix listed";
+
+                        JsonNode fixVersions =
+                                vulnerability
+                                        .path("fix")
+                                        .path("versions");
+
+                        if (
+                                fixVersions.isArray()
+                                        && !fixVersions.isEmpty()
+                        ) {
+
+                            fixVersion =
+                                    fixVersions
+                                            .get(0)
+                                            .asText(
+                                                    "No fix listed"
+                                            );
+                        }
+
+                        report.append(
+                                findingIndex
+                        )
+                        .append(
+                                ". "
+                        )
+                        .append(
+                                vulnerabilityId
+                        )
+                        .append(
+                                " | "
+                        )
+                        .append(
+                                packageName
+                        )
+                        .append(
+                                "@"
+                        )
+                        .append(
+                                installedVersion
+                        )
+                        .append(
+                                " | severity="
+                        )
+                        .append(
+                                severity
+                        )
+                        .append(
+                                " | fix="
+                        )
+                        .append(
+                                fixVersion
+                        )
+                        .append(
+                                "\n"
+                        );
+
+                        findingIndex++;
+                    }
+                }
+
+            } catch (Exception grypeParseException) {
+
+                report.append(
+                        "GRYPE OUTPUT PARSING FAILED:\n"
+                )
+                .append(
+                        grypeOutput
+                                .toString()
+                                .trim()
+                );
+            }
+
+            return report.toString().trim();
+
+        } catch (Exception e) {
+
+            return "Syft/Grype CLI execution failed: "
+                    + e.getMessage();
+
+        } finally {
+
+            // =================================================
+            // CLEAN TEMPORARY SBOM
+            // =================================================
+
+            if (sbomFile != null
+                    && sbomFile.exists()) {
+
+                try {
+
+                    Files.deleteIfExists(
+                            sbomFile.toPath()
+                    );
+
+                } catch (IOException ignored) {
+
+                    // Cleanup failure should not
+                    // break the scan response.
+                }
             }
         }
     }
-}
 
     // =========================================================
     // FIND MANIFEST
