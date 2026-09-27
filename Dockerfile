@@ -1,3 +1,22 @@
+# =========================
+# Stage 1: Build Spring Boot
+# =========================
+FROM eclipse-temurin:17-jdk AS builder
+
+WORKDIR /workspace
+
+COPY gradlew gradlew
+COPY gradle gradle
+COPY build.gradle settings.gradle ./
+COPY src src
+
+RUN chmod +x gradlew
+RUN ./gradlew clean bootJar --no-daemon
+
+
+# =========================
+# Stage 2: Runtime
+# =========================
 FROM eclipse-temurin:17-jre
 
 WORKDIR /app
@@ -13,7 +32,7 @@ RUN mkdir -p /root/.cache/grype/db \
 ENV GRYPE_DB_AUTO_UPDATE=false
 ENV GRYPE_DB_MAX_ALLOWED_BUILT_AGE=720h
 
-COPY build/libs/backend-0.0.1-SNAPSHOT.jar app.jar
+COPY --from=builder /workspace/build/libs/backend-0.0.1-SNAPSHOT.jar app.jar
 
 EXPOSE 8080
 
